@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# fetch-esr.sh — Download the latest Firefox ESR source tarball
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+SRC_DIR="$ROOT_DIR/src"
+
+VERSIONS_URL="https://product-details.mozilla.org/1.0/firefox_versions.json"
+DOWNLOAD_BASE="https://archive.mozilla.org/pub/firefox/releases"
+
+echo "[fetch-esr] Fetching version metadata..."
+VERSIONS_JSON=$(curl -fsSL "$VERSIONS_URL")
+
+# Extract FIREFOX_ESR version (e.g., "128.8.0esr")
+ESR_VERSION=$(echo "$VERSIONS_JSON" | python3 -c \
+    "import sys,json; d=json.load(sys.stdin); print(d['FIREFOX_ESR'])")
+
+if [[ -z "$ESR_VERSION" ]]; then
+    echo "[fetch-esr] ERROR: Could not determine ESR version." >&2
+    exit 1
+fi
+
+echo "[fetch-esr] Latest Firefox ESR: $ESR_VERSION"
+
+TARBALL="firefox-${ESR_VERSION}.source.tar.xz"
+DOWNLOAD_URL="${DOWNLOAD_BASE}/${ESR_VERSION}/source/${TARBALL}"
+# Mozilla publishes SHA512SUMS at the release root, not in the source/ subdirectory.
+# The file contains lines like: <hash>  source/firefox-128.8.0esr.source.tar.xz
+SHA512SUMS_URL="${DOWNLOAD_BASE}/${ESR_VERSION}/SHA512SUMS"
+
+mkdir -p "$SRC_DIR"
+
+if [[ -f "$SRC_DIR/$TARBALL" ]]; then
+    echo "[fetch-esr] Tarball already present, skipping download."
+else
+    echo "[fetch-esr] Downloading $TARBALL..."
+    curl -fL --progress-bar -o "$SRC_DIR/$TARBALL" "$DOWNLOAD_URL"
+
+    echo "[fetch-esr] Downloading SHA512SUMS..."
+    curl -fsSL -o "$SRC_DIR/SHA512SUMS" "$SHA512SUMS_URL"
+
+    echo "[fetch-esr] Verifying checksum..."
+    # Lines in SHA512SUMS look like: <hash>  source/firefox-128.8.0esr.source.tar.xz
+    EXPECTED_SHA=$(grep "source/${TARBALL}$" "$SRC_DIR/SHA512SUMS" | awk '{print $1}')
+    ACTUAL_SHA=$(shasum -a 512 "$SRC_DIR/$TARBALL" | awk '{print $1}')
+
+    if [[ -z "$EXPECTED_SHA" ]]; then
+        echo "[fetch-esr] ERROR: Could not find checksum for $TARBALL in SHA512SUMS." >&2
+        exit 1
+    fi
+
+    if [[ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]]; then
+        echo "[fetch-esr] ERROR: Checksum mismatch! Deleting corrupt file." >&2
+        rm -f "$SRC_DIR/$TARBALL"
+        exit 1
+    fi
+    echo "[fetch-esr] Checksum OK."
+fi
+
+EXTRACT_DIR="$SRC_DIR/firefox-${ESR_VERSION%esr}"
+if [[ -d "$EXTRACT_DIR" ]]; then
+    echo "[fetch-esr] Source already extracted at $EXTRACT_DIR"
+else
+    echo "[fetch-esr] Extracting (this may take a few minutes)..."
+    tar -xJf "$SRC_DIR/$TARBALL" -C "$SRC_DIR"
+    echo "[fetch-esr] Extracted to $EXTRACT_DIR"
+fi
+
+# Write version file so other scripts can reference it
+echo "$ESR_VERSION" > "$SRC_DIR/.esr_version"
+echo "[fetch-esr] Done. Source ready at: $EXTRACT_DIR"

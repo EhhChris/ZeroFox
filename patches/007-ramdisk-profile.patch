@@ -1,0 +1,199 @@
+# STUB — Remove this line once real diff content is added below.
+#
+# PATCH: 007-ramdisk-profile
+# PURPOSE: At startup, automatically create a RAM-backed filesystem, place the
+#          Firefox profile on it, and destroy it on exit. No launch script needed.
+#          The binary is self-contained — `./zerofox` just works.
+#
+# ── OVERVIEW ─────────────────────────────────────────────────────────────────
+#
+# Firefox's startup sequence in XRE_main() (toolkit/xre/nsAppRunner.cpp):
+#   1. Parses command line
+#   2. Selects/creates a profile via nsToolkitProfileService
+#   3. Locks the profile directory
+#   4. Starts the app
+#
+# We hook in between steps 1 and 2 to:
+#   a. Create a RAM disk (platform-specific)
+#   b. Create a profile directory on it
+#   c. Write the embedded user.js into it
+#   d. Force Firefox to use that directory as its profile
+#   e. Register a shutdown observer to tear down the RAM disk on exit
+#
+# ── PART 1: New file — zerofox RAM disk module ────────────────────────────────
+#
+# Create: toolkit/xre/ZeroFoxRamDisk.h
+# Create: toolkit/xre/ZeroFoxRamDisk.cpp
+#
+# Interface:
+#   namespace zerofox {
+#     // Creates RAM disk, writes profile, returns profile path.
+#     // Returns empty string on failure.
+#     nsString SetupRamProfile();
+#
+#     // Tears down the RAM disk. Called at shutdown.
+#     void TeardownRamProfile();
+#   }
+#
+# ── macOS implementation ──────────────────────────────────────────────────────
+#
+#   #include <spawn.h>    // posix_spawn
+#   #include <sys/wait.h>
+#
+#   static nsString sRamDiskDev;   // e.g. "/dev/disk5"
+#   static nsString sRamDiskMount; // e.g. "/Volumes/ZeroFoxProfile"
+#
+#   static bool RunCommand(const char* cmd[]) {
+#     pid_t pid;
+#     extern char** environ;
+#     posix_spawn(&pid, cmd[0], nullptr, nullptr, (char**)cmd, environ);
+#     int status;
+#     waitpid(pid, &status, 0);
+#     return WEXITSTATUS(status) == 0;
+#   }
+#
+#   nsString SetupRamProfile() {
+#     // 512 MB RAM disk: 512 * 1024 * 1024 / 512 = 1048576 sectors
+#     const char* attach[] = {
+#       "hdiutil", "attach", "-nomount", "ram://1048576", nullptr
+#     };
+#     // capture stdout to get /dev/diskN — use pipe + posix_spawn instead of system()
+#     // ... (see posix_spawn with POSIX_SPAWN_USEVFORK + pipe for stdout capture)
+#
+#     // Format the RAM disk
+#     const char* erase[] = {
+#       "diskutil", "erasevolume", "HFS+", "ZeroFoxProfile",
+#       sRamDiskDev.get(), nullptr
+#     };
+#     RunCommand(erase);
+#
+#     sRamDiskMount = u"/Volumes/ZeroFoxProfile"_ns;
+#
+#     // Create profile dir and write user.js
+#     nsString profilePath = sRamDiskMount + u"/profile"_ns;
+#     PR_MkDir(NS_ConvertUTF16toUTF8(profilePath).get(), 0700);
+#     WriteEmbeddedUserJs(profilePath);
+#
+#     return profilePath;
+#   }
+#
+#   void TeardownRamProfile() {
+#     const char* unmount[] = {
+#       "diskutil", "quiet", "unmount", "force",
+#       NS_ConvertUTF16toUTF8(sRamDiskMount).get(), nullptr
+#     };
+#     RunCommand(unmount);
+#   }
+#
+# ── Linux implementation ──────────────────────────────────────────────────────
+#
+#   #include <sys/mount.h>
+#
+#   static std::string sMountPoint; // e.g. "/tmp/zerofox-XXXXXX"
+#
+#   nsString SetupRamProfile() {
+#     char tmpl[] = "/tmp/zerofox-XXXXXX";
+#     mkdtemp(tmpl);
+#     sMountPoint = tmpl;
+#
+#     // Mount tmpfs at the temp dir (requires CAP_SYS_ADMIN or user namespace)
+#     mount("tmpfs", tmpl, "tmpfs", 0, "size=512m,mode=0700");
+#
+#     std::string profilePath = sMountPoint + "/profile";
+#     mkdir(profilePath.c_str(), 0700);
+#     WriteEmbeddedUserJs(NS_ConvertUTF8toUTF16(profilePath.c_str()));
+#
+#     return NS_ConvertUTF8toUTF16(profilePath.c_str());
+#   }
+#
+#   void TeardownRamProfile() {
+#     umount(sMountPoint.c_str());
+#     rmdir(sMountPoint.c_str());
+#   }
+#
+# ── PART 2: Embed user.js as a string constant ────────────────────────────────
+#
+# Rather than reading user.js from disk at runtime (which would require it to
+# exist next to the binary), embed its content directly in the binary.
+#
+# In ZeroFoxRamDisk.cpp:
+#
+#   static const char kUserJs[] =
+#     // Paste the full content of config/user.js here as a raw string literal:
+#     R"USERJS(
+#     user_pref("browser.cache.disk.enable", false);
+#     user_pref("browser.privatebrowsing.autostart", true);
+#     // ... all other prefs from config/user.js ...
+#     )USERJS";
+#
+#   static void WriteEmbeddedUserJs(const nsString& profilePath) {
+#     nsCOMPtr<nsIFile> file;
+#     NS_NewLocalFile(profilePath, false, getter_AddRefs(file));
+#     file->Append(u"user.js"_ns);
+#
+#     nsCOMPtr<nsIFileOutputStream> stream =
+#         do_CreateInstance("@mozilla.org/network/file-output-stream;1");
+#     stream->Init(file, PR_WRONLY | PR_CREATE_FILE | PR_TRUNCATE, 0600, 0);
+#
+#     uint32_t written;
+#     stream->Write(kUserJs, sizeof(kUserJs) - 1, &written);
+#     stream->Close();
+#   }
+#
+# ── PART 3: Hook into XRE_main ───────────────────────────────────────────────
+#
+# File: toolkit/xre/nsAppRunner.cpp
+#
+# Find: XRE_main() — the main entry point called from nsBrowserApp.cpp
+# After argument parsing but before profile selection, add:
+#
+#   #include "ZeroFoxRamDisk.h"
+#
+#   // ZeroFox: set up RAM-backed profile before profile service initializes
+#   nsString ramProfilePath = zerofox::SetupRamProfile();
+#   if (ramProfilePath.IsEmpty()) {
+#     // Fatal — refuse to start without RAM profile
+#     Output(true, "ZeroFox: Failed to create RAM disk profile. Aborting.\n");
+#     return 1;
+#   }
+#   // Override the -profile argument so nsToolkitProfileService uses our path
+#   ar.AddFlag("-profile");
+#   ar.AddFlag(NS_ConvertUTF16toUTF8(ramProfilePath).get());
+#
+# The `ar` object is the parsed argument list. The exact API depends on the
+# XRE_main signature in the version you're targeting — search for how
+# existing code adds/overrides the "-profile" argument in nsAppRunner.cpp.
+#
+# ── PART 4: Shutdown observer ────────────────────────────────────────────────
+#
+# Register a shutdown observer in ZeroFoxRamDisk.cpp to call TeardownRamProfile()
+# when Firefox quits cleanly. Also register an atexit() handler as a fallback
+# for crash/kill scenarios.
+#
+#   // In SetupRamProfile(), after mounting:
+#   nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
+#   obs->AddObserver(new ZeroFoxShutdownObserver(), "quit-application", false);
+#   atexit([]{ zerofox::TeardownRamProfile(); });
+#
+#   // ZeroFoxShutdownObserver::Observe():
+#   NS_IMETHODIMP Observe(nsISupports*, const char* topic, const char16_t*) {
+#     zerofox::TeardownRamProfile();
+#     return NS_OK;
+#   }
+#
+# ── PART 5: Add to moz.build ─────────────────────────────────────────────────
+#
+# File: toolkit/xre/moz.build
+# Add to UNIFIED_SOURCES:
+#   "ZeroFoxRamDisk.cpp",
+# Add platform-conditional libs:
+#   if CONFIG['OS_TARGET'] == 'Darwin':
+#       OS_LIBS += ['-framework', 'CoreFoundation']
+#
+# ── GENERATE THIS PATCH ───────────────────────────────────────────────────────
+#   cd src/firefox-<version>
+#   hg diff toolkit/xre/nsAppRunner.cpp \
+#           toolkit/xre/ZeroFoxRamDisk.cpp \
+#           toolkit/xre/ZeroFoxRamDisk.h \
+#           toolkit/xre/moz.build \
+#     > patches/007-ramdisk-profile.patch

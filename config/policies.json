@@ -1,0 +1,98 @@
+{
+  "policies": {
+    "AppUpdateURL": "",
+    "DisableAppUpdate": true,
+    "DisableFirefoxAccounts": true,
+    "DisableFirefoxStudies": true,
+    "DisableMasterPasswordCreation": false,
+    "DisablePocket": true,
+    "DisableTelemetry": true,
+    "DisableFormHistory": true,
+    "NoDefaultBookmarks": true,
+    "OverrideFirstRunPage": "",
+    "OverridePostUpdatePage": "",
+
+    "DisablePrinting": true,
+    "DisableScreenshots": true,
+
+    "BlockAboutConfig": true,
+    "BlockAboutProfiles": true,
+    "BlockAboutSupport": true,
+    "BlockAboutAddons": false,
+
+    "Permissions": {
+      "Camera": {
+        "Block": ["<all_urls>"]
+      },
+      "Microphone": {
+        "Block": ["<all_urls>"]
+      },
+      "Location": {
+        "Block": ["<all_urls>"]
+      },
+      "Notifications": {
+        "Block": ["<all_urls>"]
+      },
+      "Autoplay": {
+        "Default": "block-audio-video"
+      },
+      "VirtualReality": {
+        "Block": ["<all_urls>"]
+      }
+    },
+
+    "Cookies": {
+      "Behavior": "reject-foreign",
+      "BehaviorPrivateBrowsing": "reject-foreign",
+      "ExpireAtSessionEnd": true,
+      "Locked": true
+    },
+
+    "EncryptedMediaExtensions": {
+      "Enabled": false,
+      "Locked": true
+    },
+
+    "FirefoxHome": {
+      "Pocket": false,
+      "Snippets": false,
+      "TopSites": false,
+      "Highlights": false,
+      "Search": false,
+      "SponsoredTopSites": false,
+      "SponsoredPocket": false,
+      "Locked": true
+    },
+
+    "PromptForDownloadLocation": false,
+
+    "DNSOverHTTPS": {
+      "Enabled": false,
+      "Locked": true
+    },
+
+    "NetworkPrediction": false,
+
+    "SearchSuggestEnabled": false,
+
+    "SanitizeOnShutdown": {
+      "Cache": true,
+      "FormData": true,
+      "History": true,
+      "Sessions": true,
+      "SiteSettings": true,
+      "Cookies": true,
+      "Downloads": true,
+      "Locked": true
+    },
+
+    "UserMessaging": {
+      "WhatsNew": false,
+      "ExtensionRecommendations": false,
+      "FeatureRecommendations": false,
+      "UrlbarInterventions": false,
+      "SkipOnboarding": true,
+      "MoreFromMozilla": false
+    }
+  }
+}

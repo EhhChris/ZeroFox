@@ -1,0 +1,51 @@
+# STUB — Remove this line once real diff content is added below.
+#
+# PATCH: 002-disable-screenshare
+# PURPOSE: Block getDisplayMedia() / screen capture via WebRTC at the C++ layer.
+#
+# PREF COVERAGE (already handled via user.js):
+#   media.getusermedia.screensharing.enabled = false
+#   media.getusermedia.browser.enabled = false
+#   media.peerconnection.enabled = false
+#
+# WHAT THIS PATCH NEEDS TO ADD (for defense-in-depth, bypass-proof enforcement):
+#
+# 1. Main enforcement point — MediaManager:
+#    File: dom/media/webrtc/MediaManager.cpp
+#
+#    Find: MediaManager::GetUserMedia (handles both camera/mic and screen share)
+#    Inside the method, before any device enumeration, locate the check for
+#    `MediaSourceEnum::Screen`, `MediaSourceEnum::Window`, `MediaSourceEnum::Browser`.
+#
+#    Add a hard-coded rejection:
+#      if (aConstraints.mVideo.WasPassed()) {
+#        const auto& video = aConstraints.mVideo.Value();
+#        if (video.IsMediaTrackConstraints()) {
+#          const auto& tc = video.GetAsMediaTrackConstraints();
+#          if (tc.mMediaSource.WasPassed()) {
+#            const auto& src = tc.mMediaSource.Value();
+#            if (src == u"screen"_ns || src == u"window"_ns || src == u"browser"_ns) {
+#              // ZeroFox: screen/window/browser capture unconditionally rejected
+#              promise->MaybeRejectWithNotAllowedError(
+#                  "ZeroFox policy: screen capture is disabled");
+#              return promise.forget();
+#            }
+#          }
+#        }
+#      }
+#
+# 2. Belt-and-suspenders — MediaEngineDefault:
+#    File: dom/media/webrtc/MediaEngineDefault.cpp
+#    Find: MediaEngineDefaultVideoSource::Allocate
+#    If the source type is Screen/Window/Browser, return NS_ERROR_NOT_AVAILABLE.
+#
+# 3. IPC boundary — for content → parent process calls:
+#    File: dom/media/webrtc/MediaTransportParent.cpp (or PMedia.ipdl)
+#    Find the IPC handler for GetUserMedia and add the same source-type check.
+#    This prevents a compromised renderer from bypassing the content-side check.
+#
+# GENERATE THIS PATCH:
+#   cd src/firefox-<version>
+#   hg diff dom/media/webrtc/MediaManager.cpp \
+#           dom/media/webrtc/MediaEngineDefault.cpp \
+#     > patches/002-disable-screenshare.patch

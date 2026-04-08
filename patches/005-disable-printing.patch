@@ -1,0 +1,53 @@
+# STUB — Remove this line once real diff content is added below.
+#
+# PATCH: 005-disable-printing
+# PURPOSE: Block all print paths — Ctrl+P, File > Print, window.print() JS API,
+#          and print-to-PDF (which writes a file to disk).
+#
+# POLICY COVERAGE (policies.json "DisablePrinting": true):
+#   - Removes the print menu item and toolbar button
+#   - Blocks Ctrl+P / Cmd+P keyboard shortcut
+#   DOES NOT block: window.print() called from JavaScript, or print-to-PDF
+#   (a page can still trigger a print dialog and write a PDF to disk via JS)
+#
+# WHAT THIS PATCH MUST ADD (policy alone is insufficient):
+#
+# 1. JS window.print() API:
+#    File: dom/base/nsGlobalWindowOuter.cpp
+#
+#    Find: nsGlobalWindowOuter::Print (implements window.print())
+#    Add at the top:
+#      // ZeroFox: printing disabled
+#      if (StaticPrefs::zerofox_printing_blocked()) {
+#          // Silently ignore — same behavior as popups when blocked
+#          return;
+#      }
+#
+# 2. Print job initiation:
+#    File: layout/printing/nsPrintJob.cpp
+#
+#    Find: nsPrintJob::Initialize or nsPrintJob::DoPrint
+#    Add early return:
+#      if (StaticPrefs::zerofox_printing_blocked()) {
+#          return NS_ERROR_ABORT;
+#      }
+#
+# 3. Print-to-PDF (saves a file to disk — must also be blocked):
+#    File: layout/printing/nsPrintJob.cpp
+#    The print-to-PDF path uses a PDF printer driver. It will be caught by the
+#    nsPrintJob block above. However, also check:
+#    File: toolkit/components/printing/nsPrintingProxy.cpp
+#    Find: nsPrintingProxy::ShowPrintDialog and block there as well.
+#
+# 4. Remove the keyboard shortcut as a redundant block (UI layer):
+#    File: browser/base/content/browser-sets.inc (or browser.xhtml)
+#    Find the keyset entry for printKb (Ctrl+P / Cmd+P).
+#    Wrap it in a #ifdef or remove it outright.
+#    Note: DisablePrinting policy already handles this for enterprise builds.
+#
+# GENERATE THIS PATCH:
+#   cd src/firefox-<version>
+#   hg diff dom/base/nsGlobalWindowOuter.cpp \
+#           layout/printing/nsPrintJob.cpp \
+#           toolkit/components/printing/nsPrintingProxy.cpp \
+#     > patches/005-disable-printing.patch

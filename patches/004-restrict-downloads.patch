@@ -1,0 +1,69 @@
+# STUB — Remove this line once real diff content is added below.
+#
+# PATCH: 004-restrict-downloads
+# PURPOSE: Block all file downloads to disk — including explicit user-initiated downloads,
+#          inline content-disposition downloads, and helper-app handoffs.
+#          Files should never touch persistent storage.
+#
+# PREF COVERAGE (already handled via user.js and policies.json):
+#   browser.download.forbid_open_with = true
+#   browser.download.manager.retention = 0
+#   browser.download.start_downloads_in_tmp_dir = false  (prevents even tmp writes)
+#
+# WHAT THIS PATCH NEEDS TO ADD:
+#
+# 1. Primary block — external helper app service:
+#    File: uriloader/exthandler/nsExternalHelperAppService.cpp
+#
+#    Find: nsExternalHelperAppService::DoContent
+#    This is called for any MIME type that triggers a download (application/pdf,
+#    application/zip, Content-Disposition: attachment, etc.)
+#
+#    At the entry of DoContent, add:
+#      // ZeroFox: file downloads to disk unconditionally blocked
+#      if (StaticPrefs::zerofox_downloads_blocked()) {
+#          nsresult rv;
+#          nsCOMPtr<nsIChannel> channel = do_QueryInterface(aRequest, &rv);
+#          if (channel) {
+#              channel->Cancel(NS_ERROR_ABORT);
+#          }
+#          // Show user-facing error (see zerofox-download-blocked.xhtml below)
+#          // TODO: navigate to chrome://zerofox/content/download-blocked.xhtml
+#          return NS_OK;
+#      }
+#
+# 2. Download manager path:
+#    File: toolkit/components/downloads/nsDownloadManager.cpp (older)
+#          OR toolkit/components/downloads/DownloadCore.jsm (newer JSM path)
+#
+#    In DownloadCore.jsm, find the `start()` method of the Download class.
+#    Add at the top:
+#      if (Services.prefs.getBoolPref("zerofox.downloads.blocked", true)) {
+#          throw new Error("ZeroFox: downloads are disabled");
+#      }
+#
+# 3. Save-as (Ctrl+S) path:
+#    File: browser/components/downloads/content/downloads.js
+#          OR browser/base/content/browser.js → saveBrowser() / saveURL()
+#
+#    Find: saveURL() and saveDocument() in browser.js
+#    Add ZeroFox policy check at entry, show error notification instead.
+#
+# 4. Blob URL downloads (href="blob:..." download="file.zip"):
+#    File: dom/base/nsContentUtils.cpp
+#    Find: nsContentUtils::IsFilePickerBlocked / the anchor click handler
+#    The anchor download attribute is processed in HTMLAnchorElement::HandleLinkClick.
+#    File: dom/html/HTMLAnchorElement.cpp
+#    Find: HTMLAnchorElement::HandleLinkClick and block when download attribute is set.
+#
+# 5. Add a chrome error page (optional, nice UX):
+#    Create: browser/themes/shared/zerofox-download-blocked.xhtml
+#    Simple page explaining downloads are disabled in ZeroFox.
+#
+# GENERATE THIS PATCH:
+#   cd src/firefox-<version>
+#   hg diff uriloader/exthandler/nsExternalHelperAppService.cpp \
+#           dom/html/HTMLAnchorElement.cpp \
+#           browser/base/content/browser.js \
+#           modules/libpref/init/StaticPrefList.yaml \
+#     > patches/004-restrict-downloads.patch

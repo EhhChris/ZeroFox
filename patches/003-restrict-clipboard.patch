@@ -1,0 +1,62 @@
+# STUB — Remove this line once real diff content is added below.
+#
+# PATCH: 003-restrict-clipboard
+# PURPOSE: Block clipboard read/write from web content (Clipboard API and execCommand).
+#          System clipboard (user Ctrl+C / Ctrl+V within the browser UI) is NOT affected.
+#
+# PREF COVERAGE (already handled via user.js):
+#   dom.allow_cut_copy = false              → blocks execCommand cut/copy
+#   dom.event.clipboardevents.enabled = false → blocks JS clipboard event listeners
+#
+# WHAT THIS PATCH NEEDS TO ADD (C++ enforcement):
+#
+# 1. Async Clipboard API — main block point:
+#    File: dom/events/Clipboard.cpp
+#
+#    Find: Clipboard::ReadText and Clipboard::WriteText (and Read / Write variants).
+#    At the top of each method, add a ZeroFox policy check:
+#
+#      // ZeroFox: clipboard API disabled for web content
+#      nsCOMPtr<nsPIDOMWindowInner> owner = GetOwner();
+#      if (owner && !owner->IsSecureContext()) {
+#        // already blocked, but also block secure contexts:
+#      }
+#      aRv.ThrowNotAllowedError("ZeroFox policy: clipboard access denied");
+#      return already_AddRefed<Promise>();
+#
+#    A cleaner approach: check a build-time or runtime flag you add:
+#      if (StaticPrefs::zerofox_clipboard_blocked()) {
+#          aRv.ThrowNotAllowedError(...);
+#          return nullptr;
+#      }
+#
+# 2. execCommand cut/copy/paste:
+#    File: dom/base/Document.cpp
+#    Find: Document::ExecCommand (handles "cut", "copy", "paste" commands)
+#    For each of those three command strings, return false unconditionally.
+#
+# 3. DataTransfer (drag-and-drop clipboard path):
+#    File: dom/events/DataTransfer.cpp
+#    Find: DataTransfer::GetData and DataTransfer::SetData
+#    If the source is not a trusted UI event (check IsTrusted()), reject.
+#
+# 4. To add a StaticPref for runtime control (cleaner than hardcoding):
+#    File: modules/libpref/init/StaticPrefList.yaml
+#    Add:
+#      - name: zerofox.clipboard.blocked
+#        type: bool
+#        value: true
+#        mirror: always
+#
+# SCOPE NOTE:
+#   The user can still Ctrl+C / Ctrl+V in the browser URL bar, devtools console,
+#   and other browser chrome — those use nsBaseClipboard directly and bypass the
+#   DOM clipboard API entirely. This patch only affects web content.
+#
+# GENERATE THIS PATCH:
+#   cd src/firefox-<version>
+#   hg diff dom/events/Clipboard.cpp \
+#           dom/base/Document.cpp \
+#           dom/events/DataTransfer.cpp \
+#           modules/libpref/init/StaticPrefList.yaml \
+#     > patches/003-restrict-clipboard.patch

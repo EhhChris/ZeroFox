@@ -1,0 +1,50 @@
+# STUB — Remove this line once real diff content is added below.
+#
+# PATCH: 001-disable-screenshots
+# PURPOSE: Block all screenshot capture paths — both the built-in Firefox Screenshots
+#          extension and OS-level window capture hints.
+#
+# POLICY COVERAGE (policies.json + user.js):
+#   - "DisableScreenshots": true  → disables Firefox's own Screenshots toolbar button
+#   - extensions.screenshots.disabled = true → disables the built-in extension
+#   DOES NOT block: OS-level capture tools (screencapture, Print Screen, OBS, etc.),
+#   other extensions, or any app that calls the OS screen capture API directly.
+#   The policy has no awareness of the OS windowing system.
+#
+# WHAT THIS PATCH MUST ADD (policy alone is insufficient):
+#
+# 1. browser/extensions/screenshots/background/takeScreenshot.js (JS, simpler):
+#    - Find the `captureTab` and `captureSelectedArea` functions.
+#    - At the top of each, add:
+#        throw new Error("ZeroFox: screenshots disabled");
+#    - This kills the built-in extension path even if policy is bypassed.
+#
+# 2. For OS-level screenshot blocking (macOS — NSWindow flag):
+#    File: widget/cocoa/nsCocoaWindow.mm
+#    In nsCocoaWindow::Create() or Show(), after the NSWindow is initialized, add:
+#      [mWindow setSharingType:NSWindowSharingNone];
+#    This prevents the window from appearing in screen capture APIs and screen recorders.
+#    Reference: https://developer.apple.com/documentation/appkit/nswindowsharingtype
+#
+# 3. For X11/Linux (prevent MIT-SHM / XFixes screenshot):
+#    File: widget/gtk/nsWindow.cpp
+#    In nsWindow::Create(), call:
+#      gdk_window_set_composited(mGdkWindow, TRUE); // force composited, not readable
+#    OR patch the X11 event loop to reject XFixesGetCursorImage and similar.
+#    (This is a best-effort; X11 has no reliable screenshot-prevention mechanism.)
+#
+# 4. For Windows (SetWindowDisplayAffinity):
+#    File: widget/windows/nsWindow.cpp
+#    In nsWindow::Create() or Show(), after HWND is created:
+#      SetWindowDisplayAffinity(mWnd, WDA_EXCLUDEFROMCAPTURE);
+#    This makes the window appear black in all screen capture tools.
+#    Requires Windows 10 2004+ (build 19041+).
+#
+# GENERATE THIS PATCH:
+#   Make the changes above in the Firefox source tree, then:
+#   cd src/firefox-<version>
+#   hg diff widget/cocoa/nsCocoaWindow.mm \
+#           widget/gtk/nsWindow.cpp \
+#           widget/windows/nsWindow.cpp \
+#           browser/extensions/screenshots/background/takeScreenshot.js \
+#     > patches/001-disable-screenshots.patch

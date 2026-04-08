@@ -1,0 +1,8 @@
+# Firefox source and build artifacts
+src/
+
+# macOS
+.DS_Store
+
+# Build logs
+*.log
