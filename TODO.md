@@ -1,8 +1,13 @@
 # ZeroFox — TODO
 
-## Patches (all currently stubs)
+## Patches
 
-- [ ] **001-disable-screenshots** — Implement `NSWindowSharingNone` (macOS), `WDA_EXCLUDEFROMCAPTURE` (Windows), and GTK compositing hint (Linux) in the widget layer; also kill the built-in extension path in `takeScreenshot.js`
+- [x] **000-fix-bindgen-basic-string-view** — Applied; revisit if broken again after an ESR version bump (bindgen/libc++ compatibility issue)
+- [x] **001-disable-screenshots** — macOS (`NSWindowSharingNone`), Windows (`WDA_EXCLUDEFROMCAPTURE`), JS entry points blocked; Linux GTK layer still missing
+- [ ] **001-disable-screenshots (Linux)** — Add GTK-layer screenshot prevention if Linux support is added
+
+## Patches (stubs)
+
 - [ ] **002-disable-screenshare** — Add hard rejection in `MediaManager.cpp` for `screen`/`window`/`browser` source types; add IPC boundary check in the content → parent process path
 - [ ] **003-restrict-clipboard** — Block `Clipboard::ReadText`/`WriteText` and `Document::ExecCommand` cut/copy/paste for web content in `dom/events/Clipboard.cpp` and `dom/base/Document.cpp`; add `StaticPref` for runtime control
 - [ ] **004-restrict-downloads** — Block all download paths in `nsExternalHelperAppService::DoContent`, `DownloadCore.jsm`, `saveURL()`/`saveDocument()` in `browser.js`, and blob URL anchor downloads in `HTMLAnchorElement.cpp`
