@@ -8,7 +8,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #
 # 1. macOS (widget/cocoa/nsCocoaWindow.mm)
 #    NSWindowSharingNone tells the macOS compositor to exclude this window
-#    from all screen capture APIs — screencapture, QuickTime, OBS, etc.
+#    from all screen capture APIs -- screencapture, QuickTime, OBS, etc.
 #    The window appears black or absent in any capture tool.
 #
 # 2. Windows (widget/windows/nsWindow.cpp)
@@ -24,74 +24,68 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 --- a/widget/cocoa/nsCocoaWindow.mm
 +++ b/widget/cocoa/nsCocoaWindow.mm
-@@ -4763,8 +4763,12 @@
+@@ -4761,10 +4761,14 @@
+
+   // Create the window
    mWindow = [[windowClass alloc] initWithContentRect:contentRect
                                             styleMask:features
                                               backing:NSBackingStoreBuffered
                                                 defer:YES];
-
 +  // ZeroFox: prevent this window from appearing in any screen capture API,
 +  // screen recorder, or screenshot tool. NSWindowSharingNone instructs the
 +  // macOS compositor to exclude the window's backing store from capture.
 +  [mWindow setSharingType:NSWindowSharingNone];
-+
+
    // Make sure that window titles don't leak to disk in private browsing mode
    // due to macOS' resume feature.
    mWindow.restorable = !aIsPrivateBrowsing;
-
 --- a/widget/windows/nsWindow.cpp
 +++ b/widget/windows/nsWindow.cpp
-@@ -958,12 +958,17 @@
+@@ -956,14 +956,18 @@
+   }
+
+   if (!mWnd) {
+     mWnd =
+         ::CreateWindowExW(desiredStyles.ex, className, L"", desiredStyles.style,
+                           aRect.X(), aRect.Y(), aRect.Width(), aRect.Height(),
+                           parent, nullptr, nsToolkit::mDllInstance, nullptr);
      if (!mWnd) {
-       mWnd =
-           ::CreateWindowExW(desiredStyles.ex, className, L"", desiredStyles.style,
-                             aRect.X(), aRect.Y(), aRect.Width(), aRect.Height(),
-                             parent, nullptr, nsToolkit::mDllInstance, nullptr);
-       if (!mWnd) {
-         NS_WARNING("nsWindow CreateWindowEx failed.");
-         return NS_ERROR_FAILURE;
-       }
+       NS_WARNING("nsWindow CreateWindowEx failed.");
+       return NS_ERROR_FAILURE;
      }
-
+   }
 +  // ZeroFox: exclude this window from all screen capture APIs.
-+  // WDA_EXCLUDEFROMCAPTURE requires Windows 10 build 19041+; on older builds
-+  // the call returns FALSE which we intentionally ignore — best effort.
++  // WDA_EXCLUDEFROMCAPTURE requires Windows 10 build 19041+; on older
++  // builds the call returns FALSE which we intentionally ignore.
 +  ::SetWindowDisplayAffinity(mWnd, WDA_EXCLUDEFROMCAPTURE);
-+
-     {
 
+   {
 --- a/browser/components/screenshots/ScreenshotsUtils.sys.mjs
 +++ b/browser/components/screenshots/ScreenshotsUtils.sys.mjs
-@@ -1052,6 +1052,10 @@
+@@ -1052,6 +1052,9 @@
    async takeScreenshot(browser, type) {
 +    // ZeroFox: built-in screenshot capture disabled.
 +    console.error("ZeroFox: screenshot capture is disabled by policy.");
 +    return;
-+
      this.closePanel(browser);
      this.closeOverlay(browser, {
        doNotResetMethods: true,
        highlightRegions: true,
      });
-
-@@ -1180,6 +1184,10 @@
+@@ -1180,5 +1183,8 @@
    async copyScreenshotFromRegion(region, browser) {
 +    // ZeroFox: built-in screenshot capture disabled.
 +    console.error("ZeroFox: screenshot capture is disabled by policy.");
 +    return;
-+
      let canvas = await this.createCanvas(region, browser);
      let blob = await canvas.convertToBlob();
 
      await this.copyScreenshot(blob, browser, "OverlayCopy");
-   },
-
-@@ -1263,6 +1271,10 @@
+@@ -1263,5 +1269,8 @@
    async downloadScreenshotFromRegion(title, region, browser) {
 +    // ZeroFox: built-in screenshot capture disabled.
 +    console.error("ZeroFox: screenshot capture is disabled by policy.");
 +    return;
-+
      let canvas = await this.createCanvas(region, browser);
      let blob = await canvas.convertToBlob();
      let blobURL = URL.createObjectURL(blob);
