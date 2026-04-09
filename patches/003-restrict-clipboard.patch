@@ -4,8 +4,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 # PATCH: 003-restrict-clipboard
 #
-# Blocks all clipboard access from web content at the C++ layer.
-# Three entry points are covered:
+# Blocks all clipboard and drag-to-copy access. Five entry points covered:
 #
 # 1. Clipboard::ReadHelper (dom/events/Clipboard.cpp)
 #    Covers both Clipboard.read() and Clipboard.readText() -- both funnel
@@ -20,21 +19,25 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #    execCommand("paste") -- the legacy synchronous clipboard API still
 #    widely used by web pages.
 #
+# 4. nsCopySupport::FireClipboardEvent (dom/base/nsCopySupport.cpp)
+#    Blocks the user-level copy command (Ctrl+C, right-click Copy, address
+#    bar Ctrl+C, etc.) for ALL content including browser chrome. This is
+#    the path taken when the USER presses Ctrl+C -- it bypasses all JS
+#    clipboard APIs and writes directly to the clipboard. Blocking here
+#    prevents both the clipboard event dispatch AND the subsequent
+#    EncodeDocumentWithContextAndPutToClipboard write.
+#    Paste is deliberately NOT blocked so users can type into web forms.
+#
+# 5. nsBaseDragSession::InvokeDragSession (widget/nsBaseDragService.cpp)
+#    Blocks drag-and-drop text exfiltration from web content. When a user
+#    drags selected text out of a web page to another application, Firefox
+#    calls InvokeDragSession with the source document. We abort for any
+#    non-chrome browsing context. Chrome UI drags (tabs, bookmarks, etc.)
+#    are unaffected because their documents have IsChrome() == true.
+#
 # The user.js prefs dom.allow_cut_copy=false and
 # dom.event.clipboardevents.enabled=false are belt-and-suspenders on top
 # of this patch. The patch is the authoritative block.
-#
-# 4. nsCopySupport::FireClipboardEvent (dom/base/nsCopySupport.cpp)
-#    Blocks the actual browser copy command (Ctrl+C, right-click Copy) for
-#    non-chrome (web content) browsing contexts. This is the path taken when
-#    the USER presses Ctrl+C — it bypasses all JavaScript clipboard APIs
-#    entirely and writes directly to the clipboard via EncodeDocumentWithContext.
-#    Blocking at FireClipboardEvent (immediately after chromeShell is determined)
-#    prevents both the event dispatch AND the EncodeDocument write for web content.
-#    Paste is deliberately NOT blocked so users can type into web forms.
-#
-# SCOPE: only web content is affected. The browser UI (address bar,
-# devtools, etc.) uses chromeShell=true and is NOT blocked.
 
 --- a/dom/events/Clipboard.cpp
 +++ b/dom/events/Clipboard.cpp
@@ -42,7 +45,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  already_AddRefed<Promise> Clipboard::ReadHelper(nsIPrincipal& aSubjectPrincipal,
                                                  ReadRequestType aType,
                                                  ErrorResult& aRv) {
-+  // ZeroFox: clipboard read access disabled for web content.
++  // ZeroFox: clipboard read access disabled.
 +  aRv.ThrowNotAllowedError("ZeroFox policy: clipboard access is disabled.");
 +  return nullptr;
    // Create a new promise
@@ -51,7 +54,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
  already_AddRefed<Promise> Clipboard::Write(
      const Sequence<OwningNonNull<ClipboardItem>>& aData,
      nsIPrincipal& aSubjectPrincipal, ErrorResult& aRv) {
-+  // ZeroFox: clipboard write access disabled for web content.
++  // ZeroFox: clipboard write access disabled.
 +  aRv.ThrowNotAllowedError("ZeroFox policy: clipboard access is disabled.");
 +  return nullptr;
    // Create a promise
@@ -62,8 +65,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
    BrowsingContext* bc = piWindow->GetBrowsingContext();
    const bool chromeShell = bc && bc->IsChrome();
 
-+  // ZeroFox: block clipboard cut/copy for web content (Ctrl+C, right-click Copy, etc.)
-+  if (!chromeShell && (originalEventMessage == eCopy || originalEventMessage == eCut)) {
++  // ZeroFox: block clipboard cut/copy for all content including browser UI.
++  if (originalEventMessage == eCopy || originalEventMessage == eCut) {
 +    return false;
 +  }
 +
@@ -86,3 +89,18 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 +  }
    //  for optional parameters see dom/src/base/nsHistory.cpp: HistoryImpl::Go()
    //  this might add some ugly JS dependencies?
+--- a/widget/nsBaseDragService.cpp
++++ b/widget/nsBaseDragService.cpp
+@@ -322,5 +322,12 @@
+   // stash the document of the dom node
+   mSourceDocument = aDOMNode->OwnerDoc();
++  // ZeroFox: block drag from web content to prevent text exfiltration.
++  if (mSourceDocument) {
++    mozilla::dom::BrowsingContext* bc = mSourceDocument->GetBrowsingContext();
++    if (bc && !bc->IsChrome()) {
++      return NS_ERROR_ABORT;
++    }
++  }
+   mTriggeringPrincipal = aPrincipal;
+   mCsp = aCsp;
+   mSourceNode = aDOMNode;
