@@ -57,6 +57,12 @@ user_pref("devtools.debugger.prompt-connection", false);
 user_pref("dom.allow_cut_copy", false);
 user_pref("dom.event.clipboardevents.enabled", false);
 
+// ── Printing ─────────────────────────────────────────────────────────────────
+// Belt-and-suspenders alongside DisablePrinting policy and patch 005.
+// print.enabled=false causes PrintOuter (window.print() entry point) to
+// silently return before reaching C++. The C++ patch blocks everything else.
+user_pref("print.enabled", false);
+
 // ── Screenshots (built-in) ────────────────────────────────────────────────────
 user_pref("extensions.screenshots.disabled", true);
 
