@@ -46,6 +46,13 @@ user_pref("media.getusermedia.screensharing.enabled", false);
 user_pref("media.getusermedia.browser.enabled", false);
 user_pref("media.getusermedia.window.focus_source.enabled", false);
 
+// ── Developer tools ───────────────────────────────────────────────────────────
+// Belt-and-suspenders alongside DisableDeveloperTools policy and patch 008.
+user_pref("devtools.policy.disabled", true);
+user_pref("devtools.chrome.enabled", false);
+user_pref("devtools.debugger.remote-enabled", false);
+user_pref("devtools.debugger.prompt-connection", false);
+
 // ── Clipboard ─────────────────────────────────────────────────────────────────
 user_pref("dom.allow_cut_copy", false);
 user_pref("dom.event.clipboardevents.enabled", false);

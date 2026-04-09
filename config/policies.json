@@ -14,6 +14,7 @@
 
     "DisablePrinting": true,
     "DisableScreenshots": true,
+    "DisableDeveloperTools": true,
 
     "BlockAboutConfig": true,
     "BlockAboutProfiles": true,
