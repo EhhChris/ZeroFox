@@ -24,8 +24,17 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 # dom.event.clipboardevents.enabled=false are belt-and-suspenders on top
 # of this patch. The patch is the authoritative block.
 #
+# 4. nsCopySupport::FireClipboardEvent (dom/base/nsCopySupport.cpp)
+#    Blocks the actual browser copy command (Ctrl+C, right-click Copy) for
+#    non-chrome (web content) browsing contexts. This is the path taken when
+#    the USER presses Ctrl+C — it bypasses all JavaScript clipboard APIs
+#    entirely and writes directly to the clipboard via EncodeDocumentWithContext.
+#    Blocking at FireClipboardEvent (immediately after chromeShell is determined)
+#    prevents both the event dispatch AND the EncodeDocument write for web content.
+#    Paste is deliberately NOT blocked so users can type into web forms.
+#
 # SCOPE: only web content is affected. The browser UI (address bar,
-# devtools, etc.) uses nsBaseClipboard directly and is NOT blocked.
+# devtools, etc.) uses chromeShell=true and is NOT blocked.
 
 --- a/dom/events/Clipboard.cpp
 +++ b/dom/events/Clipboard.cpp
@@ -47,6 +56,20 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 +  return nullptr;
    // Create a promise
    RefPtr<nsGlobalWindowInner> owner = GetOwnerWindow();
+--- a/dom/base/nsCopySupport.cpp
++++ b/dom/base/nsCopySupport.cpp
+@@ -822,6 +822,11 @@
+   BrowsingContext* bc = piWindow->GetBrowsingContext();
+   const bool chromeShell = bc && bc->IsChrome();
+
++  // ZeroFox: block clipboard cut/copy for web content (Ctrl+C, right-click Copy, etc.)
++  if (!chromeShell && (originalEventMessage == eCopy || originalEventMessage == eCut)) {
++    return false;
++  }
++
+   // next, fire the cut, copy or paste event
+   bool doDefault = true;
+   RefPtr<DataTransfer> clipboardData;
 --- a/dom/base/Document.cpp
 +++ b/dom/base/Document.cpp
 @@ -5574,7 +5574,13 @@
