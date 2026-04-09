@@ -1,62 +1,65 @@
-# STUB — Remove this line once real diff content is added below.
-#
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 # PATCH: 003-restrict-clipboard
-# PURPOSE: Block clipboard read/write from web content (Clipboard API and execCommand).
-#          System clipboard (user Ctrl+C / Ctrl+V within the browser UI) is NOT affected.
 #
-# PREF COVERAGE (already handled via user.js):
-#   dom.allow_cut_copy = false              → blocks execCommand cut/copy
-#   dom.event.clipboardevents.enabled = false → blocks JS clipboard event listeners
+# Blocks all clipboard access from web content at the C++ layer.
+# Three entry points are covered:
 #
-# WHAT THIS PATCH NEEDS TO ADD (C++ enforcement):
+# 1. Clipboard::ReadHelper (dom/events/Clipboard.cpp)
+#    Covers both Clipboard.read() and Clipboard.readText() -- both funnel
+#    through this single method, so one block covers both.
 #
-# 1. Async Clipboard API — main block point:
-#    File: dom/events/Clipboard.cpp
+# 2. Clipboard::Write (dom/events/Clipboard.cpp)
+#    Covers Clipboard.write(). Clipboard.writeText() delegates to Write
+#    internally, so this also blocks writeText().
 #
-#    Find: Clipboard::ReadText and Clipboard::WriteText (and Read / Write variants).
-#    At the top of each method, add a ZeroFox policy check:
+# 3. Document::ExecCommand (dom/base/Document.cpp)
+#    Blocks document.execCommand("cut"), execCommand("copy"), and
+#    execCommand("paste") -- the legacy synchronous clipboard API still
+#    widely used by web pages.
 #
-#      // ZeroFox: clipboard API disabled for web content
-#      nsCOMPtr<nsPIDOMWindowInner> owner = GetOwner();
-#      if (owner && !owner->IsSecureContext()) {
-#        // already blocked, but also block secure contexts:
-#      }
-#      aRv.ThrowNotAllowedError("ZeroFox policy: clipboard access denied");
-#      return already_AddRefed<Promise>();
+# The user.js prefs dom.allow_cut_copy=false and
+# dom.event.clipboardevents.enabled=false are belt-and-suspenders on top
+# of this patch. The patch is the authoritative block.
 #
-#    A cleaner approach: check a build-time or runtime flag you add:
-#      if (StaticPrefs::zerofox_clipboard_blocked()) {
-#          aRv.ThrowNotAllowedError(...);
-#          return nullptr;
-#      }
-#
-# 2. execCommand cut/copy/paste:
-#    File: dom/base/Document.cpp
-#    Find: Document::ExecCommand (handles "cut", "copy", "paste" commands)
-#    For each of those three command strings, return false unconditionally.
-#
-# 3. DataTransfer (drag-and-drop clipboard path):
-#    File: dom/events/DataTransfer.cpp
-#    Find: DataTransfer::GetData and DataTransfer::SetData
-#    If the source is not a trusted UI event (check IsTrusted()), reject.
-#
-# 4. To add a StaticPref for runtime control (cleaner than hardcoding):
-#    File: modules/libpref/init/StaticPrefList.yaml
-#    Add:
-#      - name: zerofox.clipboard.blocked
-#        type: bool
-#        value: true
-#        mirror: always
-#
-# SCOPE NOTE:
-#   The user can still Ctrl+C / Ctrl+V in the browser URL bar, devtools console,
-#   and other browser chrome — those use nsBaseClipboard directly and bypass the
-#   DOM clipboard API entirely. This patch only affects web content.
-#
-# GENERATE THIS PATCH:
-#   cd src/firefox-<version>
-#   hg diff dom/events/Clipboard.cpp \
-#           dom/base/Document.cpp \
-#           dom/events/DataTransfer.cpp \
-#           modules/libpref/init/StaticPrefList.yaml \
-#     > patches/003-restrict-clipboard.patch
+# SCOPE: only web content is affected. The browser UI (address bar,
+# devtools, etc.) uses nsBaseClipboard directly and is NOT blocked.
+
+--- a/dom/events/Clipboard.cpp
++++ b/dom/events/Clipboard.cpp
+@@ -329,5 +329,8 @@
+ already_AddRefed<Promise> Clipboard::ReadHelper(nsIPrincipal& aSubjectPrincipal,
+                                                 ReadRequestType aType,
+                                                 ErrorResult& aRv) {
++  // ZeroFox: clipboard read access disabled for web content.
++  aRv.ThrowNotAllowedError("ZeroFox policy: clipboard access is disabled.");
++  return nullptr;
+   // Create a new promise
+   nsGlobalWindowInner* owner = GetOwnerWindow();
+@@ -679,5 +682,8 @@
+ already_AddRefed<Promise> Clipboard::Write(
+     const Sequence<OwningNonNull<ClipboardItem>>& aData,
+     nsIPrincipal& aSubjectPrincipal, ErrorResult& aRv) {
++  // ZeroFox: clipboard write access disabled for web content.
++  aRv.ThrowNotAllowedError("ZeroFox policy: clipboard access is disabled.");
++  return nullptr;
+   // Create a promise
+   RefPtr<nsGlobalWindowInner> owner = GetOwnerWindow();
+--- a/dom/base/Document.cpp
++++ b/dom/base/Document.cpp
+@@ -5574,7 +5574,13 @@
+   // if they are requesting UI from us, let's fail since we have no UI
+   if (aShowUI) {
+     return false;
+   }
+
++  // ZeroFox: block clipboard commands from web content.
++  if (aHTMLCommandName.LowerCaseEqualsLiteral("cut") ||
++      aHTMLCommandName.LowerCaseEqualsLiteral("copy") ||
++      aHTMLCommandName.LowerCaseEqualsLiteral("paste")) {
++    return false;
++  }
+   //  for optional parameters see dom/src/base/nsHistory.cpp: HistoryImpl::Go()
+   //  this might add some ugly JS dependencies?
