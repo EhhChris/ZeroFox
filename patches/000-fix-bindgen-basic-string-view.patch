@@ -20,7 +20,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 --- a/tools/profiler/rust-api/build.rs
 +++ b/tools/profiler/rust-api/build.rs
-@@ -91,6 +91,10 @@
+@@ -91,5 +91,9 @@
          // std::vector needs to be converted to an opaque type because, if it's
          // not an opaque type, bindgen can't find its size properly and
          // MarkerSchema's total size reduces. That causes a heap buffer overflow.
