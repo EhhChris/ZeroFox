@@ -62,7 +62,11 @@ if [[ -d "$BRANDING_DIR" ]]; then
     # Generate macOS .icns (macOS only)
     if command -v iconutil &>/dev/null; then
         iconutil -c icns "$ICONSET" -o "$BRANDING_DIR/firefox.icns"
-        echo "[build] Generated firefox.icns"
+        # document.icns = file-association icon for .html files; reuse app icon
+        cp "$BRANDING_DIR/firefox.icns" "$BRANDING_DIR/document.icns"
+        # disk.icns = DMG volume icon; reuse app icon as placeholder
+        cp "$BRANDING_DIR/firefox.icns" "$BRANDING_DIR/disk.icns"
+        echo "[build] Generated firefox.icns, document.icns, disk.icns"
     fi
 
     echo "[build] Branding assets installed."
