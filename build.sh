@@ -43,6 +43,33 @@ else
     echo "[build] Skipping patches (--skip-patches)"
 fi
 
+# ── Step 2.5: Copy ZeroFox branding assets ───────────────────────────────────
+BRANDING_DIR="$FIREFOX_SRC/browser/branding/zerofox"
+if [[ -d "$BRANDING_DIR" ]]; then
+    ICONSET="$ROOT_DIR/branding/ZeroFox.iconset"
+    echo "[build] Copying ZeroFox branding icons..."
+
+    cp "$ICONSET/icon_16x16.png"    "$BRANDING_DIR/default16.png"
+    cp "$ICONSET/icon_32x32.png"    "$BRANDING_DIR/default32.png"
+    cp "$ICONSET/icon_32x32@2x.png" "$BRANDING_DIR/default64.png"
+    cp "$ICONSET/icon_128x128.png"  "$BRANDING_DIR/default128.png"
+    cp "$ICONSET/icon_256x256.png"  "$BRANDING_DIR/default256.png"
+
+    # Scale sizes not present in the iconset
+    sips -z 48 48 "$ICONSET/icon_32x32@2x.png" --out "$BRANDING_DIR/default48.png" >/dev/null
+    sips -z 32 32 "$ICONSET/icon_32x32.png"    --out "$BRANDING_DIR/default32.png" >/dev/null
+
+    # Generate macOS .icns (macOS only)
+    if command -v iconutil &>/dev/null; then
+        iconutil -c icns "$ICONSET" -o "$BRANDING_DIR/firefox.icns"
+        echo "[build] Generated firefox.icns"
+    fi
+
+    echo "[build] Branding assets installed."
+else
+    echo "[build] Branding directory not found — skipping branding asset copy."
+fi
+
 # ── Step 3: Install build configuration ──────────────────────────────────────
 echo "[build] Installing mozconfig..."
 cp "$CONFIG_DIR/mozconfig" "$FIREFOX_SRC/.mozconfig"

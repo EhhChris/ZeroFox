@@ -13,11 +13,8 @@ export MOZILLA_OFFICIAL=1
 export CC=~/.mozbuild/clang/bin/clang
 export CXX=~/.mozbuild/clang/bin/clang++
 
-# Custom branding (see branding/ directory; copy to browser/branding/zerofox)
-# ac_add_options --with-branding=browser/branding/zerofox
-# Uncomment the line above once branding assets are in place.
-# Until then, use nightly branding as a placeholder:
-ac_add_options --with-branding=browser/branding/nightly
+# Custom branding — text files created by patch 009, binary icons copied by build.sh
+ac_add_options --with-branding=browser/branding/zerofox
 
 # ── Build type ────────────────────────────────────────────────────────────────
 ac_add_options --enable-optimize="-O2"
