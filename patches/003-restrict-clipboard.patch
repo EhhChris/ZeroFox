@@ -28,7 +28,15 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #    EncodeDocumentWithContextAndPutToClipboard write.
 #    Paste is deliberately NOT blocked so users can type into web forms.
 #
-# 5. nsBaseDragSession::InvokeDragSession (widget/nsBaseDragService.cpp)
+# 5. nsBaseClipboard::SetData (widget/nsBaseClipboard.cpp)
+#    The universal clipboard write funnel. Every path that writes to the OS
+#    clipboard — whether from web content JS, the C++ editor, or chrome JS
+#    via ClipboardHelper (e.g. the URL bar's doCommand()) — ultimately calls
+#    this method. Replacing the SetNativeClipboardData call with NS_OK makes
+#    all clipboard writes silently succeed without touching the OS pasteboard.
+#    This is the backstop that catches anything FireClipboardEvent doesn't see.
+#
+# 6. nsBaseDragSession::InvokeDragSession (widget/nsBaseDragService.cpp)
 #    Blocks drag-and-drop text exfiltration from web content. When a user
 #    drags selected text out of a web page to another application, Firefox
 #    calls InvokeDragSession with the source document. We abort for any
@@ -89,6 +97,19 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 +  }
    //  for optional parameters see dom/src/base/nsHistory.cpp: HistoryImpl::Go()
    //  this might add some ugly JS dependencies?
+--- a/widget/nsBaseClipboard.cpp
++++ b/widget/nsBaseClipboard.cpp
+@@ -387,8 +387,9 @@
+   nsresult rv = NS_ERROR_FAILURE;
+   if (aTransferable) {
+     mIgnoreEmptyNotification = true;
+     // Reject existing pending asyncSetData request if any.
+     RejectPendingAsyncSetDataRequestIfAny(aWhichClipboard);
+-    rv = SetNativeClipboardData(aTransferable, aWhichClipboard);
++    // ZeroFox: suppress all clipboard writes to the OS clipboard.
++    rv = NS_OK;
+     mIgnoreEmptyNotification = false;
+   }
 --- a/widget/nsBaseDragService.cpp
 +++ b/widget/nsBaseDragService.cpp
 @@ -322,5 +322,12 @@
