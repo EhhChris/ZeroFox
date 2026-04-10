@@ -57,6 +57,17 @@ user_pref("devtools.debugger.prompt-connection", false);
 user_pref("dom.allow_cut_copy", false);
 user_pref("dom.event.clipboardevents.enabled", false);
 
+// ── Telemetry and diagnostics: all off ───────────────────────────────────────
+// Belt-and-suspenders alongside DisableTelemetry policy and patch 010.
+// patch 010 hard-codes dataSubmissionEnabled=false and short-circuits setupTelemetry.
+// These prefs handle Glean (reads healthreport.uploadEnabled at fog_init time)
+// and ensure nothing slips through if prefs are evaluated before the patch takes effect.
+user_pref("datareporting.policy.dataSubmissionEnabled", false);
+user_pref("datareporting.healthreport.uploadEnabled", false);
+user_pref("toolkit.telemetry.enabled", false);
+user_pref("toolkit.telemetry.unified", false);
+user_pref("datareporting.policy.dataSubmissionPolicyBypassNotification", true);
+
 // ── Printing ─────────────────────────────────────────────────────────────────
 // Belt-and-suspenders alongside DisablePrinting policy and patch 005.
 // print.enabled=false causes PrintOuter (window.print() entry point) to

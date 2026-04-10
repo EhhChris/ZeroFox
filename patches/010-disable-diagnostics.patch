@@ -1,0 +1,67 @@
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+# PATCH: 010-disable-diagnostics
+#
+# Permanently disables all diagnostics, telemetry, and data reporting.
+# Also suppresses the first-launch data-policy consent notification.
+#
+# Three layers of coverage:
+#
+# 1. TelemetryReportingPolicy.dataSubmissionEnabled (TelemetryReportingPolicy.sys.mjs)
+#    The master switch for all remote data submission. Hardcoded to false so
+#    that no pref override can re-enable it. Because _shouldNotify() checks
+#    this getter first, the first-run consent notification is also suppressed —
+#    no prompt ever appears asking the user to opt in or out.
+#
+# 2. TelemetryController.setupTelemetry (TelemetryControllerParent.sys.mjs)
+#    Called on profile-after-change to initialize the entire legacy telemetry
+#    pipeline. Returning an already-resolved promise early prevents all ping
+#    collection, session recording, and health-report scheduling.
+#
+# Glean (Mozilla's newer metrics system) reads datareporting.healthreport.uploadEnabled
+# at fog_init() time. That pref is set to false in user.js and locked via the
+# DisableTelemetry enterprise policy in policies.json, so Glean initializes
+# with upload disabled and never sends pings.
+#
+# Belt-and-suspenders prefs in user.js:
+#   datareporting.policy.dataSubmissionEnabled = false
+#   datareporting.healthreport.uploadEnabled = false
+#   toolkit.telemetry.enabled = false
+#   toolkit.telemetry.unified = false
+#   datareporting.policy.dataSubmissionPolicyBypassNotification = true
+
+--- a/toolkit/components/telemetry/app/TelemetryReportingPolicy.sys.mjs
++++ b/toolkit/components/telemetry/app/TelemetryReportingPolicy.sys.mjs
+@@ -278,13 +278,10 @@
+    * This is the master switch for remote server communication. If it is
+    * false, we never request upload or deletion.
+    */
+-  get dataSubmissionEnabled() {
+-    // Default is true because we are opt-out.
+-    return Services.prefs.getBoolPref(
+-      TelemetryUtils.Preferences.DataSubmissionEnabled,
+-      true
+-    );
+-  },
++  get dataSubmissionEnabled() {
++    // ZeroFox: diagnostics and data submission permanently disabled.
++    return false;
++  },
+
+   get currentPolicyVersion() {
+     return Services.prefs.getIntPref(
+--- a/toolkit/components/telemetry/app/TelemetryControllerParent.sys.mjs
++++ b/toolkit/components/telemetry/app/TelemetryControllerParent.sys.mjs
+@@ -691,7 +691,9 @@
+    *
+    * @return {Promise} Resolved when TelemetryController and TelemetrySession are fully
+    *                   initialized. This is only used in tests.
+    */
+   setupTelemetry: function setupTelemetry(testing) {
++    // ZeroFox: telemetry permanently disabled.
++    return Promise.resolve();
+     this._initStarted = true;
+     this._shuttingDown = false;
+     this._shutDown = false;
