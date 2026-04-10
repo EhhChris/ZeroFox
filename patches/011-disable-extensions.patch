@@ -1,0 +1,62 @@
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+# PATCH: 011-disable-extensions
+#
+# Prevents any user-installed extension from loading or being installed.
+# Built-in application addons (default theme, bundled dictionaries) are
+# unaffected so the browser UI remains intact.
+#
+# Two source entry points covered:
+#
+# 1. XPIProvider.setupInstallLocations (XPIProvider.sys.mjs)
+#    Filters the install location list to only register locations with
+#    SCOPE_APPLICATION (value 4). This covers:
+#      - KEY_APP_SYSTEM_BUILTINS (SystemBuiltInLocation)
+#      - KEY_APP_BUILTINS (BuiltInLocation)
+#      - KEY_APP_GLOBAL (application extensions dir, locked)
+#    The following are silently skipped:
+#      - TemporaryInstallLocation (scope=null) — sideloaded temp addons
+#      - KEY_APP_PROFILE (SCOPE_PROFILE=1) — user-installed profile addons
+#      - KEY_APP_SYSTEM_ADDONS (SCOPE_PROFILE=1) — remotely-updated system addons
+#      - KEY_APP_SYSTEM_USER / registry (SCOPE_USER=2) — per-user installs
+#      - KEY_APP_SYSTEM_SHARE / LOCAL / registry (SCOPE_SYSTEM=8)
+#    enabledScopes always force-ORs SCOPE_PROFILE back in (see lazy.enabledScopes
+#    getter), so the pref alone cannot block profile-location loading.
+#
+# 2. AddonInstall.install (XPIInstall.sys.mjs)
+#    Throws immediately on any install() call regardless of state. This is
+#    belt-and-suspenders against any install pathway that doesn't go through
+#    location filtering — including programmatic installs from chrome JS.
+#
+# Policy-level coverage (policies.json):
+#   ExtensionSettings: {"*": {"installation_mode": "blocked"}} — locks the
+#   addon manager UI and disables any non-allowlisted extension that is
+#   already in the profile when the browser starts.
+#
+# Pref-level coverage (user.js):
+#   xpinstall.enabled = false — gates the XPI install subsystem entirely.
+
+--- a/toolkit/mozapps/extensions/internal/XPIProvider.sys.mjs
++++ b/toolkit/mozapps/extensions/internal/XPIProvider.sys.mjs
+@@ -2618,4 +2618,8 @@
+     for (let [constructor, name, scope, ...args] of locations) {
++      // ZeroFox: only register application-scoped (built-in) addon locations.
++      if (scope !== AddonManager.SCOPE_APPLICATION) {
++        continue;
++      }
+       if (!scope || lazy.enabledScopes & scope) {
+         try {
+           let loc = constructor(name, scope, ...args);
+--- a/toolkit/mozapps/extensions/internal/XPIInstall.sys.mjs
++++ b/toolkit/mozapps/extensions/internal/XPIInstall.sys.mjs
+@@ -1389,6 +1389,8 @@
+    * @throws if installation cannot proceed from the current state
+    */
+   install() {
++    // ZeroFox: extension installation permanently disabled.
++    throw new Error("ZeroFox policy: extension installation is disabled.");
+     switch (this.state) {
+       case AddonManager.STATE_DOWNLOADED:
+         this.checkPrompt();

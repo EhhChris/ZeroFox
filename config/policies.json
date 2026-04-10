@@ -19,7 +19,13 @@
     "BlockAboutConfig": true,
     "BlockAboutProfiles": true,
     "BlockAboutSupport": true,
-    "BlockAboutAddons": false,
+    "BlockAboutAddons": true,
+
+    "ExtensionSettings": {
+      "*": {
+        "installation_mode": "blocked"
+      }
+    },
 
     "Permissions": {
       "Camera": {

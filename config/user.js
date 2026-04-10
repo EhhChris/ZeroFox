@@ -57,6 +57,11 @@ user_pref("devtools.debugger.prompt-connection", false);
 user_pref("dom.allow_cut_copy", false);
 user_pref("dom.event.clipboardevents.enabled", false);
 
+// ── Extensions: disabled ─────────────────────────────────────────────────────
+// Belt-and-suspenders alongside ExtensionSettings policy and patch 011.
+// xpinstall.enabled gates the entire XPI install subsystem.
+user_pref("xpinstall.enabled", false);
+
 // ── Telemetry and diagnostics: all off ───────────────────────────────────────
 // Belt-and-suspenders alongside DisableTelemetry policy and patch 010.
 // patch 010 hard-codes dataSubmissionEnabled=false and short-circuits setupTelemetry.
