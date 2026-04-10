@@ -3,7 +3,7 @@
 
 # ZeroFox
 
-A patched version of Firefox ESR browser that attempts to restrict users from removing data from the browser or otherwise persisting it locally. ZeroFox is **not** a complete solution, and really only makes sense when the deployment and operating environment is largely controlled and the user has no elevated privileges. The intended purpose is to provide a moderate approach to data loss prevention strategies with less intense external infrastructure requirements and less user impact on performance for use in **controlled** environments.
+A set of patches for building a branded version of Firefox ESR browser that attempts to restrict users from removing data from the browser or otherwise persisting it locally. ZeroFox is **not** a complete solution, and really only makes sense when the deployment and operating environment is largely controlled and the user has no elevated privileges. The intended purpose is to provide a moderate approach to data loss prevention strategies with less intense external infrastructure requirements and less user impact on performance for use in **controlled** environments.
 
 **Currently only built and tested against FireFox ESR 140.9.1**
 
