@@ -37,11 +37,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #    This is the backstop that catches anything FireClipboardEvent doesn't see.
 #
 # 6. nsBaseDragSession::InvokeDragSession (widget/nsBaseDragService.cpp)
-#    Blocks drag-and-drop text exfiltration from web content. When a user
-#    drags selected text out of a web page to another application, Firefox
-#    calls InvokeDragSession with the source document. We abort for any
-#    non-chrome browsing context. Chrome UI drags (tabs, bookmarks, etc.)
-#    are unaffected because their documents have IsChrome() == true.
+#    Blocks all drag-and-drop unconditionally. Earlier versions only blocked
+#    non-chrome drags, but the URL bar (chrome) could still drag text out.
+#    Returning NS_ERROR_ABORT before any data is set prevents all drags from
+#    reaching external applications.
 #
 # The user.js prefs dom.allow_cut_copy=false and
 # dom.event.clipboardevents.enabled=false are belt-and-suspenders on top
@@ -112,16 +111,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
    }
 --- a/widget/nsBaseDragService.cpp
 +++ b/widget/nsBaseDragService.cpp
-@@ -322,5 +322,12 @@
+@@ -322,5 +322,7 @@
    // stash the document of the dom node
    mSourceDocument = aDOMNode->OwnerDoc();
-+  // ZeroFox: block drag from web content to prevent text exfiltration.
-+  if (mSourceDocument) {
-+    mozilla::dom::BrowsingContext* bc = mSourceDocument->GetBrowsingContext();
-+    if (bc && !bc->IsChrome()) {
-+      return NS_ERROR_ABORT;
-+    }
-+  }
++  // ZeroFox: block all drag-and-drop to prevent text exfiltration (incl. URL bar).
++  return NS_ERROR_ABORT;
    mTriggeringPrincipal = aPrincipal;
    mCsp = aCsp;
    mSourceNode = aDOMNode;
