@@ -26,7 +26,7 @@ cd src/firefox-$(cat src/.esr_version)
 cd ../..
 
 # 2. Build
-./build.sh --skip-fetch           # skips re-attempting steps if already complete
+./build.sh # Attempts the full build process on the last esr version pulled by fetch-esr.sh
 ```
 
 ---
@@ -54,8 +54,7 @@ ZeroFox/
 ├── scripts/
 │   ├── fetch-esr.sh            # Download & verify latest Firefox ESR
 │   └── apply-patches.sh        # Apply patches with dry-run validation
-└── branding/
-    └── README.md               # Custom icon/branding instructions
+└── branding/                   # ZeroFox branding assets
 ```
 
 ---
