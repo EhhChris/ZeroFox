@@ -50,7 +50,10 @@ ZeroFox/
 │   ├── 005-disable-printing.patch
 │   ├── 006-enforce-vpn.patch
 │   ├── 007-ramdisk-profile.patch
-│   └── 008-disable-devtools.patch
+│   ├── 008-disable-devtools.patch
+│   ├── 009-zerofox-branding.patch
+│   ├── 010-disable-diagnostics.patch
+│   └── 011-disable-extensions.patch
 ├── scripts/
 │   ├── fetch-esr.sh            # Download & verify latest Firefox ESR
 │   └── apply-patches.sh        # Apply patches with dry-run validation
