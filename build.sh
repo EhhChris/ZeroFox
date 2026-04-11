@@ -55,9 +55,7 @@ if [[ -d "$BRANDING_DIR" ]]; then
     cp "$ICONSET/icon_128x128.png"  "$BRANDING_DIR/default128.png"
     cp "$ICONSET/icon_256x256.png"  "$BRANDING_DIR/default256.png"
 
-    # Scale sizes not present in the iconset
-    sips -z 48 48 "$ICONSET/icon_32x32@2x.png" --out "$BRANDING_DIR/default48.png" >/dev/null
-    sips -z 32 32 "$ICONSET/icon_32x32.png"    --out "$BRANDING_DIR/default32.png" >/dev/null
+    cp "$ICONSET/icon_48x48.png"   "$BRANDING_DIR/default48.png"
 
     # Generate macOS .icns (macOS only)
     if command -v iconutil &>/dev/null; then
