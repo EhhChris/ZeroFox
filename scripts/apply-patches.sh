@@ -52,3 +52,49 @@ done
 echo ""
 echo "[apply-patches] Applied: $APPLIED  Failed: $FAILED"
 [[ $FAILED -eq 0 ]] || exit 1
+
+# ── Windows branding binary assets ───────────────────────────────────────────
+# These binary files are required by browser/branding/zerofox/ on Windows builds.
+# Copied from nightly branding as placeholders; replace with custom ZeroFox
+# artwork before distribution.
+ZEROFOX_BRANDING="$FIREFOX_SRC/browser/branding/zerofox"
+NIGHTLY_BRANDING="$FIREFOX_SRC/browser/branding/nightly"
+
+if [[ -d "$NIGHTLY_BRANDING" ]]; then
+    echo "[apply-patches] Copying branding binary assets to zerofox branding..."
+    mkdir -p "$ZEROFOX_BRANDING/stubinstaller" "$ZEROFOX_BRANDING/msix/Assets"
+    for asset in \
+        VisualElements_150.png VisualElements_70.png \
+        PrivateBrowsing_150.png PrivateBrowsing_70.png \
+        firefox.ico firefox64.ico document.ico document_pdf.ico \
+        newwindow.ico newtab.ico pbmode.ico \
+        background.png \
+        default22.png default24.png \
+        disk.icns document.icns dsstore firefox.icns \
+        content/about-logo.png content/about-logo@2x.png \
+        content/about-logo-private.png content/about-logo-private@2x.png \
+        content/about.png \
+        stubinstaller/bgstub.jpg \
+        wizHeader.bmp wizHeaderRTL.bmp wizWatermark.bmp \
+        msix/Assets/Document44x44.png \
+        msix/Assets/LargeTile.scale-200.png \
+        msix/Assets/SmallTile.scale-200.png \
+        msix/Assets/Square150x150Logo.scale-200.png \
+        msix/Assets/Square44x44Logo.altform-lightunplated_targetsize-256.png \
+        msix/Assets/Square44x44Logo.altform-unplated_targetsize-256.png \
+        msix/Assets/Square44x44Logo.scale-200.png \
+        msix/Assets/Square44x44Logo.targetsize-256.png \
+        msix/Assets/StoreLogo.scale-200.png \
+        msix/Assets/Wide310x150Logo.scale-200.png \
+        content/about-logo.svg content/about-wordmark.svg \
+        content/document_pdf.svg content/firefox-wordmark.svg \
+        stubinstaller/installing_page.css \
+        stubinstaller/profile_cleanup_page.css; do
+        if [[ -f "$NIGHTLY_BRANDING/$asset" ]]; then
+            cp "$NIGHTLY_BRANDING/$asset" "$ZEROFOX_BRANDING/$asset"
+            echo "[apply-patches]   Copied: $asset"
+        else
+            echo "[apply-patches]   WARNING: $asset not found in nightly branding" >&2
+        fi
+    done
+fi

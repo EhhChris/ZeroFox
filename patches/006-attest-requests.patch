@@ -1,0 +1,492 @@
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+# PATCH: 006-attest-requests
+#
+# PURPOSE: Attach a per-request ECIES attestation token to every outbound
+#          HTTP(S) request so that a HAProxy (or similar) in front of origin
+#          servers can verify that traffic originated from a genuine ZeroFox
+#          browser build and reject everything else.
+#
+# KEY MODEL (private key lives on HAProxy, never in the browser):
+#
+#   HAProxy holds: ECDSA P-256 private key  (long-lived, rotate on breach)
+#   Browser embeds: matching SPKI public key (new one per browser build)
+#
+#   For each new ZeroFox release:
+#     1. Run  scripts/gen-attest-key.sh  to generate a fresh keypair.
+#     2. Add the new public key bytes to kHapPublicKeyDer[] and rebuild.
+#     3. Deploy the new private key to HAProxy.
+#     4. Remove the old public key from HAProxy's allowlist — that build's
+#        traffic is now rejected even if the binary is still in circulation.
+#
+#   The browser binary contains ONLY the public key, which is not secret.
+#   Extracting it from the binary gives an attacker nothing useful because
+#   you cannot forge an encrypted token without the HAProxy private key to
+#   reproduce the ECDH shared secret on the other side.
+#
+# WHY THIS DOES NOT AFFECT PKI / OAUTH:
+#   These headers are an independent application-layer channel added on top
+#   of TLS.  TLS handshakes, certificate verification, and all OAuth flows
+#   are completely untouched.  HAProxy strips X-ZeroFox-* after verification;
+#   downstream servers never see them.
+#
+# CRYPTOGRAPHIC PROTOCOL (ECIES — Elliptic-Curve Integrated Encryption):
+#
+#   Per-request browser side:
+#     1. Generate a fresh ephemeral EC P-256 keypair (ephem_priv, ephem_pub).
+#     2. ECDH(ephem_priv, haproxy_pub) → 32-byte raw shared secret Z.
+#     3. ANSI X9.63 KDF: SHA-256(Z || 0x00000001) → take first 16 bytes
+#        as an AES-128 key  K_enc.
+#     4. Generate random 12-byte IV.
+#     5. AES-128-GCM-Encrypt(K_enc, IV, plaintext="zerofox-attest:<ts>:<host>")
+#        → ciphertext || 16-byte tag.
+#     6. token = base64( ephem_pub(65) || IV(12) || ciphertext_and_tag )
+#
+#   Headers added:
+#     X-ZeroFox-Ts:    Unix timestamp, whole seconds.
+#     X-ZeroFox-Token: base64-encoded token (above).
+#
+#   HAProxy verification (Lua pseudocode — see below for a full sketch):
+#     1. Read X-ZeroFox-Ts; reject (403) if |now – ts| > 30 s.
+#     2. Decode token from base64.
+#     3. Extract ephem_pub (bytes 0–64), IV (bytes 65–76), ct (bytes 77–).
+#     4. ECDH(haproxy_priv, ephem_pub) → Z'.
+#     5. SHA-256(Z' || 0x00000001)[0:16] → K_enc'.
+#     6. AES-128-GCM-Decrypt(K_enc', IV, ct) → plaintext.
+#     7. Assert plaintext == "zerofox-attest:" + ts_header + ":" + request_host.
+#     8. Forward on success; 403 on failure.
+#
+# HAPROXY VERIFIER SKETCH (Lua, requires lua-openssl):
+#
+#   local ssl  = require("openssl")
+#   local pkey = require("openssl.pkey")
+#   local dgst = require("openssl.digest")
+#   local ciph = require("openssl.cipher")
+#   local b64  = require("base64")
+#
+#   local priv = pkey.read(io.open("/etc/haproxy/zerofox-private.pem"):read("*a"), true)
+#
+#   core.register_action("zerofox_attest", {"http-req"}, function(txn)
+#     local ts  = txn.http:req_get_headers()["x-zerofox-ts"][0]
+#     local tok = txn.http:req_get_headers()["x-zerofox-token"][0]
+#     if not ts or not tok then txn:set_var("req.attest_ok", false); return end
+#
+#     if math.abs(os.time() - tonumber(ts)) > 30 then
+#       txn:set_var("req.attest_ok", false); return
+#     end
+#
+#     local raw      = b64.decode(tok)
+#     local ephem_pt = raw:sub(1, 65)       -- 0x04 || x(32) || y(32)
+#     local iv       = raw:sub(66, 77)      -- 12-byte GCM nonce
+#     local ct       = raw:sub(78)          -- ciphertext + 16-byte GCM tag
+#
+#     -- Reconstruct ephemeral public key as an EC point on prime256v1.
+#     local ephem_pub = pkey.new({type="EC", curve="prime256v1"})
+#     ephem_pub:set_key_point(ephem_pt)     -- set raw 04||x||y point
+#
+#     -- ECDH: Z = raw shared secret (32 bytes).
+#     local Z = priv:derive(ephem_pub)
+#
+#     -- ANSI X9.63 KDF: K_enc = SHA-256(Z || 0x00000001)[0:16]
+#     local h = dgst.new("sha256")
+#     h:update(Z); h:update("\x00\x00\x00\x01")
+#     local K_enc = h:final():sub(1, 16)
+#
+#     -- AES-128-GCM decrypt (tag is last 16 bytes of ct).
+#     local tag    = ct:sub(-16)
+#     local body   = ct:sub(1, -17)
+#     local c = ciph.new("aes-128-gcm")
+#     c:decrypt(K_enc, iv); c:setTag(tag)
+#     local plain = c:update(body) .. c:final()
+#
+#     -- Verify canonical message.
+#     local host     = txn.sf:req_hdr("host")
+#     local expected = "zerofox-attest:" .. ts .. ":" .. host
+#     txn:set_var("req.attest_ok", plain == expected)
+#   end)
+#
+#   # In the frontend block:
+#   #   http-request lua.zerofox_attest
+#   #   http-request deny if !{ var(req.attest_ok) -m bool }
+#   #   http-request del-header X-ZeroFox-Ts
+#   #   http-request del-header X-ZeroFox-Token
+#
+# KEY MANAGEMENT:
+#   See  scripts/gen-attest-key.sh  for keypair generation.
+#   The script prints the public key bytes for kHapPublicKeyDer[] and the
+#   private key PEM to deploy to HAProxy.
+#
+#   To invalidate a build: remove its public key from HAProxy (or rotate the
+#   HAProxy private key and issue a new browser build with the new public key).
+#
+# FILES ADDED:
+#   netwerk/base/ZeroFoxAttest.h
+#   netwerk/base/ZeroFoxAttest.cpp
+#
+# FILES MODIFIED:
+#   netwerk/protocol/http/nsHttpChannel.cpp
+#       — include ZeroFoxAttest.h, call zerofox::AddAttestHeaders() at
+#         end of SetupChannelForTransaction() before return NS_OK.
+#   netwerk/base/moz.build
+#       — add ZeroFoxAttest.cpp to UNIFIED_SOURCES.
+
+diff --git a/netwerk/base/ZeroFoxAttest.h b/netwerk/base/ZeroFoxAttest.h
+new file mode 100644
+--- /dev/null
++++ b/netwerk/base/ZeroFoxAttest.h
+@@ -0,0 +1,44 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
++
++#ifndef ZeroFoxAttest_h__
++#define ZeroFoxAttest_h__
++
++#include "nsHttpRequestHead.h"
++#include "nsIURI.h"
++#include "nsresult.h"
++
++namespace zerofox {
++
++/**
++ * AddAttestHeaders — inject X-ZeroFox-Ts and X-ZeroFox-Token into aHead.
++ *
++ * Called from nsHttpChannel::SetupChannelForTransaction() for every outbound
++ * HTTP/HTTPS request.  The token is an ECIES-encrypted payload that can only
++ * be decrypted by the HAProxy that holds the matching private key, proving
++ * the request originated from a genuine ZeroFox browser build.
++ *
++ * Protocol:  ECIES with EC P-256, ANSI X9.63 KDF (SHA-256), AES-128-GCM.
++ *
++ * Key model:
++ *   - HAProxy holds the EC P-256 private key (never leaves the gateway).
++ *   - Each ZeroFox build embeds only the matching SPKI public key.
++ *   - A new keypair per browser release lets HAProxy invalidate old builds
++ *     by rotating its private key or removing the old public key from its
++ *     allowlist.
++ *
++ * Behaviour when not configured:
++ *   If the embedded public key is the all-zeros placeholder, this function
++ *   is a silent no-op.  No request is ever blocked by this code.
++ *
++ * Thread-safety:
++ *   The public key is imported from DER at most once per process and cached.
++ *   Safe to call from any thread that can already call nsHttpChannel methods.
++ */
++nsresult AddAttestHeaders(mozilla::net::nsHttpRequestHead& aHead,
++                          nsIURI* aURI);
++
++}  // namespace zerofox
++
++#endif  // ZeroFoxAttest_h__
+
+diff --git a/netwerk/base/ZeroFoxAttest.cpp b/netwerk/base/ZeroFoxAttest.cpp
+new file mode 100644
+--- /dev/null
++++ b/netwerk/base/ZeroFoxAttest.cpp
+@@ -0,0 +1,232 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
++
++// ZeroFox per-request ECIES attestation header injector.
++//
++// Adds two HTTP headers to every outbound HTTP/HTTPS request:
++//
++//   X-ZeroFox-Ts:    current Unix timestamp (seconds, decimal string).
++//   X-ZeroFox-Token: base64( ephem_pub(65) || IV(12) || AES-128-GCM-ct )
++//
++// The ciphertext decrypts to "zerofox-attest:<ts>:<ascii_host>" when
++// HAProxy performs ECDH with its private key and the ephemeral public key.
++//
++// The HAProxy private key (kHapPublicKeyDer's counterpart) never appears
++// in this file or the browser binary.  Only the public key is embedded.
++// See the patch header comment and scripts/gen-attest-key.sh for setup.
++
++#include "ZeroFoxAttest.h"
++
++#include "keyhi.h"
++#include "mozilla/Base64.h"
++#include "mozilla/Logging.h"
++#include "mozilla/StaticMutex.h"
++#include "mozilla/UniquePtr.h"
++#include "mozilla/Unused.h"
++#include "nsHttp.h"
++#include "nsHttpRequestHead.h"
++#include "nsIURI.h"
++#include "nsString.h"
++#include "pk11pub.h"
++#include "prtime.h"
++#include "ScopedNSSTypes.h"
++#include "secasn1.h"
++#include "secitem.h"
++
++namespace zerofox {
++
++static mozilla::LazyLogModule sLog("ZeroFoxAttest");
++
++// ── HAProxy public key ────────────────────────────────────────────────────────
++//
++// SubjectPublicKeyInfo DER-encoded EC P-256 public key from HAProxy.
++//
++// PLACEHOLDER: all bytes 0x00.  Attestation is DISABLED until replaced.
++//
++// To generate a keypair and update this array:
++//   scripts/gen-attest-key.sh
++//
++// The matching private key goes to HAProxy — it never belongs in this file.
++//
++// A valid EC P-256 SPKI DER blob is 91 bytes and starts with 0x30.
++// The placeholder (all zeros) is detected at startup and skipped silently.
++
++// clang-format off
++static const uint8_t kHapPublicKeyDer[] = {
++  // ── REPLACE: paste  xxd -i haproxy-public.der  output here ──────────────
++  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++  0x00,
++  // ── END REPLACE ───────────────────────────────────────────────────────────
++};
++// clang-format on
++
++static constexpr uint32_t kHapPublicKeyDerLen =
++    static_cast<uint32_t>(sizeof(kHapPublicKeyDer));
++
++// Valid P-256 SPKI DER starts with 0x30 (ASN.1 SEQUENCE).
++// An all-zero buffer is the placeholder; treat as "not configured".
++static bool KeyIsPlaceholder() { return kHapPublicKeyDer[0] != 0x30; }
++
++// ── P-256 curve params for ephemeral keygen ───────────────────────────────────
++// DER encoding of OID prime256v1 (1.2.840.10045.3.1.7):
++//   06 08 2a 86 48 ce 3d 03 01 07
++static const uint8_t kP256OidDer[] = {
++    0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07};
++
++// ── Cached HAProxy public key ─────────────────────────────────────────────────
++
++static mozilla::StaticMutex sKeyMutex;
++static SECKEYPublicKey* sHapPubKey = nullptr;  // process-lifetime; not freed
++static bool sKeyLoaded = false;
++
++// Returns HAProxy's public key, importing and caching it on first call.
++// Returns nullptr if the key is the placeholder or import fails.
++static SECKEYPublicKey* GetHapPublicKey() {
++  mozilla::StaticMutexAutoLock lock(sKeyMutex);
++  if (sKeyLoaded) return sHapPubKey;
++  sKeyLoaded = true;
++
++  if (KeyIsPlaceholder()) {
++    MOZ_LOG(sLog, mozilla::LogLevel::Warning,
++            ("ZeroFoxAttest: public key is the all-zeros placeholder — "
++             "request attestation is DISABLED.  Run "
++             "scripts/gen-attest-key.sh, replace kHapPublicKeyDer[] in "
++             "netwerk/base/ZeroFoxAttest.cpp, and rebuild."));
++    return nullptr;
++  }
++
++  SECItem spkiItem = {siBuffer, const_cast<uint8_t*>(kHapPublicKeyDer),
++                      kHapPublicKeyDerLen};
++
++  UniqueCERTSubjectPublicKeyInfo spki(
++      SECKEY_DecodeDERSubjectPublicKeyInfo(&spkiItem));
++  if (!spki) {
++    MOZ_LOG(sLog, mozilla::LogLevel::Error,
++            ("ZeroFoxAttest: SECKEY_DecodeDERSubjectPublicKeyInfo failed "
++             "(bad DER bytes?)."));
++    return nullptr;
++  }
++
++  SECKEYPublicKey* key = SECKEY_ExtractPublicKey(spki.get());
++  if (!key) {
++    MOZ_LOG(sLog, mozilla::LogLevel::Error,
++            ("ZeroFoxAttest: SECKEY_ExtractPublicKey failed."));
++    return nullptr;
++  }
++
++  sHapPubKey = key;
++  return key;
++}
++
++// ── Public API ────────────────────────────────────────────────────────────────
++
++nsresult AddAttestHeaders(mozilla::net::nsHttpRequestHead& aHead,
++                          nsIURI* aURI) {
++  MOZ_ASSERT(aURI);
++
++  SECKEYPublicKey* hapPubKey = GetHapPublicKey();
++  if (!hapPubKey) {
++    return NS_OK;  // Placeholder or load failure — skip silently.
++  }
++
++  // ── 1. Timestamp ─────────────────────────────────────────────────────────
++  int64_t ts = static_cast<int64_t>(PR_Now() / PR_USEC_PER_SEC);
++  nsAutoCString tsStr;
++  tsStr.AppendInt(ts);
++
++  // ── 2. Host ───────────────────────────────────────────────────────────────
++  // Non-HTTP resources (about:, data:, blob:, …) have no host; skip them.
++  nsAutoCString host;
++  if (NS_FAILED(aURI->GetAsciiHost(host)) || host.IsEmpty()) {
++    return NS_OK;
++  }
++
++  // ── 3. Canonical plaintext ────────────────────────────────────────────────
++  nsAutoCString plaintext("zerofox-attest:");
++  plaintext.Append(tsStr);
++  plaintext.Append(':');
++  plaintext.Append(host);
++
++  // ── 4. Ephemeral EC P-256 keypair ─────────────────────────────────────────
++  // Generated fresh per-request; the public half is included in the token so
++  // HAProxy can replicate the ECDH shared secret.
++  UniquePK11SlotInfo slot(PK11_GetInternalSlot());
++  if (!slot) {
++    MOZ_LOG(sLog, mozilla::LogLevel::Error,
++            ("ZeroFoxAttest: PK11_GetInternalSlot failed."));
++    return NS_OK;
++  }
++
++  SECItem curveParams = {siBuffer, const_cast<uint8_t*>(kP256OidDer),
++                         static_cast<unsigned int>(sizeof(kP256OidDer))};
++  SECKEYPublicKey* ephemPubRaw = nullptr;
++  UniqueSECKEYPrivateKey ephemPriv(
++      PK11_GenerateKeyPair(slot.get(), CKM_EC_KEY_PAIR_GEN, &curveParams,
++                           &ephemPubRaw, PR_FALSE, PR_FALSE, nullptr));
++  UniqueSECKEYPublicKey ephemPub(ephemPubRaw);
++
++  if (!ephemPriv || !ephemPub) {
++    MOZ_LOG(sLog, mozilla::LogLevel::Error,
++            ("ZeroFoxAttest: PK11_GenerateKeyPair failed."));
++    return NS_OK;
++  }
++
++  // ── 5. ECDH + ANSI X9.63 KDF → 128-bit AES key ───────────────────────────
++  // PK11_PubDeriveWithKDF performs ECDH(ephemPriv, hapPubKey) then applies
++  // the ANSI X9.63 KDF (SHA-256(Z || 0x00000001)) to produce a 16-byte
++  // AES-128-GCM key.  HAProxy replicates this with its private key and the
++  // ephemeral public key from the token.
++  UniquePK11SymKey aesKey(PK11_PubDeriveWithKDF(
++      ephemPriv.get(), hapPubKey,
++      PR_FALSE,        // isSender (value ignored for CKM_ECDH1_DERIVE)
++      nullptr,         // randomA
++      nullptr,         // randomB
++      CKM_ECDH1_DERIVE,
++      CKM_AES_128_GCM,
++      CKA_ENCRYPT,
++      16,              // 128-bit key
++      CKD_SHA256_KDF,  // ANSI X9.63 with SHA-256
++      nullptr,         // sharedData (none)
++      nullptr));       // wincx
++
++  if (!aesKey) {
++    MOZ_LOG(sLog, mozilla::LogLevel::Error,
++            ("ZeroFoxAttest: ECDH/KDF failed."));
++    return NS_OK;
++  }
++
++  // ── 6. Random 12-byte GCM nonce ───────────────────────────────────────────
++  uint8_t iv[12];
++  if (PK11_GenerateRandom(iv, sizeof(iv)) != SECSuccess) {
++    MOZ_LOG(sLog, mozilla::LogLevel::Error,
++            ("ZeroFoxAttest: PK11_GenerateRandom failed."));
++    return NS_OK;
++  }
++
++  // ── 7. AES-128-GCM encrypt ────────────────────────────────────────────────
++  // Output: ciphertext || 16-byte GCM tag (PK11_Encrypt appends the tag).
++  CK_GCM_PARAMS gcmParams;
++  gcmParams.pIv      = iv;
++  gcmParams.ulIvLen  = sizeof(iv);
++  gcmParams.ulIvBits = 96;
++  gcmParams.pAAD     = nullptr;
++  gcmParams.ulAADLen = 0;
++  gcmParams.ulTagBits = 128;
++
++  SECItem gcmParamItem = {siBuffer,
++                          reinterpret_cast<uint8_t*>(&gcmParams),
++                          sizeof(gcmParams)};
++
++  uint32_t ptLen = static_cast<uint32_t>(plaintext.Length());
++  uint32_t ctBufLen = ptLen + 16;  // plaintext + 16-byte GCM tag
++  mozilla::UniquePtr<uint8_t[]> ctBuf(new uint8_t[ctBufLen]);
++  uint32_t ctLen = 0;
++
++  SECStatus rv = PK11_Encrypt(
++      aesKey.get(), CKM_AES_GCM, &gcmParamItem,
++      ctBuf.get(), &ctLen, ctBufLen,
++      reinterpret_cast<const uint8_t*>(plaintext.get()), ptLen);
++
++  if (rv != SECSuccess) {
++    MOZ_LOG(sLog, mozilla::LogLevel::Error,
++            ("ZeroFoxAttest: AES-128-GCM encrypt failed."));
++    return NS_OK;  // Never block the request over attestation.
++  }
++
++  // ── 8. Assemble token: ephem_pub(65) || IV(12) || ciphertext_and_tag ──────
++  // ephemPub->u.ec.publicValue holds the uncompressed point 04 || x || y.
++  const SECItem& pubPt = ephemPub->u.ec.publicValue;  // 65 bytes for P-256
++  uint32_t tokenLen = pubPt.len + sizeof(iv) + ctLen;
++  mozilla::UniquePtr<uint8_t[]> tokenBuf(new uint8_t[tokenLen]);
++  uint8_t* p = tokenBuf.get();
++  memcpy(p, pubPt.data, pubPt.len);  p += pubPt.len;
++  memcpy(p, iv, sizeof(iv));         p += sizeof(iv);
++  memcpy(p, ctBuf.get(), ctLen);
++
++  // ── 9. Base64-encode and inject headers ───────────────────────────────────
++  nsAutoCString tokenB64;
++  nsresult nsrv = mozilla::Base64Encode(
++      reinterpret_cast<const char*>(tokenBuf.get()), tokenLen, tokenB64);
++  if (NS_FAILED(nsrv)) {
++    return NS_OK;
++  }
++
++  mozilla::Unused << aHead.SetHeader("X-ZeroFox-Ts"_ns, tsStr, false);
++  mozilla::Unused << aHead.SetHeader("X-ZeroFox-Token"_ns, tokenB64, false);
++
++  return NS_OK;
++}
++
++}  // namespace zerofox
+
+diff --git a/netwerk/protocol/http/nsHttpChannel.cpp b/netwerk/protocol/http/nsHttpChannel.cpp
+--- a/netwerk/protocol/http/nsHttpChannel.cpp
++++ b/netwerk/protocol/http/nsHttpChannel.cpp
+@@ -7,6 +7,7 @@
+ // HttpLog.h should generally be included first
+ #include "HttpLog.h"
+
++#include "ZeroFoxAttest.h"
+ #include <inttypes.h>
+
+ #include "mozilla/ScopeExit.h"
+@@ -1787,6 +1788,10 @@ nsresult nsHttpChannel::SetupChannelForTransaction() {
+   if (mWebTransportSessionEventListener) {
+     mCaps |= NS_HTTP_STICKY_CONNECTION;
+   }
+
++  // ZeroFox: attach per-request ECIES attestation headers (X-ZeroFox-Ts,
++  // X-ZeroFox-Token) so a gateway can verify this is a ZeroFox browser.
++  zerofox::AddAttestHeaders(mRequestHead, mURI);
++
+   return NS_OK;
+ }
+
+diff --git a/netwerk/base/moz.build b/netwerk/base/moz.build
+--- a/netwerk/base/moz.build
++++ b/netwerk/base/moz.build
+@@ -253,5 +253,6 @@ UNIFIED_SOURCES += [
+     "ThrottleQueue.cpp",
+     "Tickler.cpp",
+     "TLSServerSocket.cpp",
+     "TRRLoadInfo.cpp",
++    "ZeroFoxAttest.cpp",
+ ]

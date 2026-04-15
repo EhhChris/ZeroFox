@@ -10,8 +10,20 @@ export MOZ_APP_NAME=zerofox
 export MOZ_APP_DISPLAYNAME="ZeroFox"
 export MOZ_CRASHREPORTER_API_URL=
 export MOZILLA_OFFICIAL=1
-export CC=~/.mozbuild/clang/bin/clang
-export CXX=~/.mozbuild/clang/bin/clang++
+
+# ── Compiler (cross-platform) ─────────────────────────────────────────────────
+# Firefox on Windows requires clang-cl (MSVC-compatibility mode).
+# On Linux/macOS plain clang is used directly.
+case "$(uname -s)" in
+    MSYS*|MINGW*|CYGWIN*)
+        export CC=clang-cl
+        export CXX=clang-cl
+        ;;
+    *)
+        export CC=~/.mozbuild/clang/bin/clang
+        export CXX=~/.mozbuild/clang/bin/clang++
+        ;;
+esac
 
 # Custom branding — text files created by patch 009, binary icons copied by build.sh
 ac_add_options --with-branding=browser/branding/zerofox
@@ -29,7 +41,6 @@ ac_add_options --enable-hardening
 ac_add_options --disable-crashreporter
 ac_add_options --disable-updater
 ac_add_options --disable-tests
-ac_add_options --disable-necko-wifi
 ac_add_options --disable-parental-controls
 ac_add_options --disable-profiling
 

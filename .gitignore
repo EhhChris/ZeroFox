@@ -6,3 +6,6 @@ src/
 
 # Build logs
 *.log
+
+# Attestation key material — NEVER commit these
+build/haproxy-private.pem

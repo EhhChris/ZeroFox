@@ -15,15 +15,9 @@
 - [ ] **006-enforce-vpn** — Implement `ZeroFoxVPNCheck.cpp` with platform-specific interface detection (macOS: `getifaddrs`, Linux: `/proc/net/dev`, Windows: `GetAdaptersInfo`); hook into `nsIOService::NewChannelFromURIWithProxyFlags2`; add `about:zerofox-novpn` error page; wire network change listener to invalidate cache
 - [ ] **007-ramdisk-profile** — Implement `ZeroFoxRamDisk.cpp`; hook into `XRE_main()` to create RAM disk before profile service initializes; embed `user.js` as a raw string literal in the binary; register shutdown observer and `atexit` handler for teardown
 
-## VPN enforcement
-
-- [ ] **Make VPN requirement configurable at build time** — Add a `mozconfig`/build flag (e.g. `--with-zerofox-vpn-interface=utun`) that bakes the expected VPN interface name or type into the binary at compile time via a `#define`. The runtime check in `ZeroFoxVPNCheck.cpp` should match against the baked-in value rather than a generic list of prefixes. This allows targeting a specific corporate VPN, WireGuard profile, etc.
-- [ ] **Allow VPN requirement to be disabled at build time** — Add a flag (e.g. `--disable-zerofox-vpn-enforcement`) so the binary can be built without the VPN gate for testing/dev builds, without needing to comment out code
-
 ## Cleanup
 
-- [ ] **Remove `zerofox-launch.sh`** — Once patch 007 is implemented, the launch script is redundant; delete it and remove all references to it in `README.md`, `patches/README.md`, and any other docs
-- [ ] **Remove launch script references from README** — The "no-disk design" section and quick-start instructions currently describe the launch script approach; update to reflect that the binary handles this itself
+- [ ] Update branding patches to cover all of the temporary nightly placeholder assets.
 
 ## Platform support
 
