@@ -185,7 +185,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 +pref("startup.homepage_welcome_url.additional", "");
 --- /dev/null
 +++ b/browser/branding/zerofox/branding.nsi
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,63 @@
 +# This Source Code Form is subject to the terms of the Mozilla Public
 +# License, v. 2.0. If a copy of the MPL was not distributed with this
 +# file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -251,7 +251,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 +!define INSTALL_INSTALLING_TEXT_COLOR 0xFFFFFF
 --- /dev/null
 +++ b/browser/branding/zerofox/firefox.VisualElementsManifest.xml
-@@ -0,0 +1,11 @@
+@@ -0,0 +1,12 @@
 +<!-- This Source Code Form is subject to the terms of the Mozilla Public
 +   - License, v. 2.0. If a copy of the MPL was not distributed with this file,
 +   - You can obtain one at http://mozilla.org/MPL/2.0/. -->
@@ -266,7 +266,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 +</Application>
 --- /dev/null
 +++ b/browser/branding/zerofox/private_browsing.VisualElementsManifest.xml
-@@ -0,0 +1,11 @@
+@@ -0,0 +1,12 @@
 +<!-- This Source Code Form is subject to the terms of the Mozilla Public
 +   - License, v. 2.0. If a copy of the MPL was not distributed with this file,
 +   - You can obtain one at http://mozilla.org/MPL/2.0/. -->
