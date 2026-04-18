@@ -9,3 +9,5 @@ src/
 
 # Attestation key material — NEVER commit these
 build/haproxy-private.pem
+test/**/*private*.pem
+test/**/*.key
