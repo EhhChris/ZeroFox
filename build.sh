@@ -97,18 +97,18 @@ cd "$FIREFOX_SRC"
 # They cannot be installed pre-build because they are not part of the Firefox build
 # system — they are runtime files read directly from the installation directory.
 #
-# autoconfig.js  → <app>/defaults/pref/   (tells Firefox to load mozilla.cfg)
-# mozilla.cfg    → <app>/Contents/MacOS/  (alongside the binary; lockPref() here
-#                                          cannot be overridden by any user action)
+# autoconfig.js  → <app>/Contents/Resources/defaults/pref/  (tells Firefox to load mozilla.cfg)
+# mozilla.cfg    → <app>/Contents/Resources/                 (NS_GRE_DIR on macOS; this is where
+#                                                             the autoconfig system looks for it)
 OBJDIR="$(dirname "$FIREFOX_SRC")/zerofox-obj"
 APP_BUNDLE="$OBJDIR/dist/ZeroFox.app"
 if [[ -d "$APP_BUNDLE" ]]; then
     echo "[build] Installing autoconfig lockdown..."
     PREF_DIR="$APP_BUNDLE/Contents/Resources/defaults/pref"
-    BIN_DIR="$APP_BUNDLE/Contents/MacOS"
+    GRE_DIR="$APP_BUNDLE/Contents/Resources"
     mkdir -p "$PREF_DIR"
     cp "$CONFIG_DIR/autoconfig.js" "$PREF_DIR/autoconfig.js"
-    cp "$CONFIG_DIR/mozilla.cfg"   "$BIN_DIR/mozilla.cfg"
+    cp "$CONFIG_DIR/mozilla.cfg"   "$GRE_DIR/mozilla.cfg"
     echo "[build] Installed autoconfig.js and mozilla.cfg"
 else
     echo "[build] WARNING: App bundle not found at $APP_BUNDLE — skipping autoconfig install"
