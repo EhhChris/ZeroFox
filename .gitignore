@@ -8,6 +8,6 @@ src/
 *.log
 
 # Attestation key material — NEVER commit these
-build/haproxy-private.pem
+build/
 test/**/*private*.pem
 test/**/*.key
